@@ -346,6 +346,68 @@ static void hostapd_link_mesr_rep_timeout_handler(void *eloop_data,
 }
 
 
+/* IEEE Std 802.11-2024, 11.10.11: answer a STA's Link Measurement Request */
+static void hostapd_handle_link_mesr_req(struct hostapd_data *hapd,
+					 const u8 *buf, size_t len)
+{
+	const struct ieee80211_mgmt *mgmt = (const struct ieee80211_mgmt *) buf;
+	const struct rrm_link_measurement_request *req;
+	struct rrm_link_measurement_report report;
+	struct hostap_sta_driver_data data;
+	struct sta_info *sta;
+	struct wpabuf *msg;
+
+	req = (const struct rrm_link_measurement_request *)
+		(mgmt->u.action.u.rrm.variable - 1);
+	if (buf + len - (const u8 *) req < (int) sizeof(*req))
+		return;
+
+	sta = ap_get_sta(hapd, mgmt->sa);
+	if (!sta || !(sta->flags & WLAN_STA_ASSOC) ||
+	    !(hapd->conf->radio_measurements[0] &
+	      WLAN_RRM_CAPS_LINK_MEASUREMENT))
+		return;
+
+	/* The driver fills in the transmit power of the report frame */
+	if (!(hapd->iface->drv_rrm_flags &
+	      WPA_DRIVER_FLAGS_TX_POWER_INSERTION)) {
+		wpa_printf(MSG_DEBUG,
+			   "RRM: Link Measurement Request from " MACSTR
+			   " ignored - no TX power insertion",
+			   MAC2STR(mgmt->sa));
+		return;
+	}
+
+	os_memset(&report, 0, sizeof(report));
+	report.dialog_token = req->dialog_token;
+	report.tpc.eid = WLAN_EID_TPC_REPORT;
+	report.tpc.len = 2;
+	/* RCPI of the last frame received from the STA (9.6.6.5); a driver
+	 * need not report the signal */
+	os_memset(&data, 0, sizeof(data));
+	if (hostapd_drv_read_sta_data(hapd, &data, mgmt->sa) == 0 &&
+	    data.signal != 0 && data.signal != -WPA_INVALID_NOISE)
+		report.rcpi = rssi_to_rcpi(data.signal);
+	else
+		report.rcpi = 255; /* not available */
+	report.rsni = 255; /* not available */
+
+	msg = wpabuf_alloc(2 + sizeof(report));
+	if (!msg)
+		return;
+	wpabuf_put_u8(msg, WLAN_ACTION_RADIO_MEASUREMENT);
+	wpabuf_put_u8(msg, WLAN_RRM_LINK_MEASUREMENT_REPORT);
+	wpabuf_put_data(msg, &report, sizeof(report));
+
+	if (hostapd_drv_send_action(hapd, hapd->iface->freq, 0, mgmt->sa,
+				    wpabuf_head(msg), wpabuf_len(msg)) < 0)
+		wpa_printf(MSG_DEBUG,
+			   "RRM: Failed to send Link Measurement Report to "
+			   MACSTR, MAC2STR(mgmt->sa));
+	wpabuf_free(msg);
+}
+
+
 static void hostapd_handle_link_mesr_report(struct hostapd_data *hapd,
 					    const u8 *buf, size_t len)
 {
@@ -402,6 +464,9 @@ void hostapd_handle_radio_measurement(struct hostapd_data *hapd,
 		break;
 	case WLAN_RRM_NEIGHBOR_REPORT_REQUEST:
 		hostapd_handle_nei_report_req(hapd, buf, len);
+		break;
+	case WLAN_RRM_LINK_MEASUREMENT_REQUEST:
+		hostapd_handle_link_mesr_req(hapd, buf, len);
 		break;
 	case WLAN_RRM_LINK_MEASUREMENT_REPORT:
 		hostapd_handle_link_mesr_report(hapd, buf, len);
