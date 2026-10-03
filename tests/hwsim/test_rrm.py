@@ -61,6 +61,30 @@ def check_nr_results(dev, bssids=None, lci=False, civic=False):
         if not found:
             raise Exception("RRM report result for %s not indicated" % bssid)
 
+def own_nr_bssid_info(hapd):
+    res = hapd.request("SHOW_NEIGHBOR").split()
+    nr = bytes.fromhex([x for x in res if x.startswith("nr=")][0][3:])
+    return struct.unpack('<I', nr[6:10])[0]
+
+def test_rrm_own_nr_mobility_domain(dev, apdev):
+    """Own neighbor report and the Mobility Domain bit"""
+    params = hostapd.wpa2_params(ssid="test-ft", passphrase="12345678")
+    params["wpa_key_mgmt"] = "FT-PSK"
+    params["mobility_domain"] = "a1b2"
+    params["nas_identifier"] = "nas1.w1.fi"
+    params["r1_key_holder"] = "000102030405"
+    params["r0kh"] = "ff:ff:ff:ff:ff:ff * 100102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0d0e0f"
+    params["r1kh"] = "00:00:00:00:00:00 00:00:00:00:00:00 100102030405060708090a0b0c0d0e0f100102030405060708090a0b0c0d0e0f"
+    params["rrm_neighbor_report"] = "1"
+    hapd = hostapd.add_ap(apdev[0], params)
+    if not own_nr_bssid_info(hapd) & (1 << 10):
+        raise Exception("Mobility Domain bit not set with FT")
+
+    params = {"ssid": "test", "rrm_neighbor_report": "1"}
+    hapd2 = hostapd.add_ap(apdev[1], params)
+    if own_nr_bssid_info(hapd2) & (1 << 10):
+        raise Exception("Mobility Domain bit set without FT")
+
 def test_rrm_neighbor_db(dev, apdev):
     """hostapd ctrl_iface SET_NEIGHBOR"""
     params = {"ssid": "test", "rrm_neighbor_report": "1"}
