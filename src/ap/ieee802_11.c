@@ -9946,6 +9946,17 @@ static u8 * hostapd_add_tpe_info(u8 *eid, u8 tx_pwr_count,
 #define REG_PSD_MAX_TXPOWER_FOR_DEFAULT_CLIENT      (-1) /* dBm/MHz */
 #define REG_PSD_MAX_TXPOWER_FOR_SUBORDINATE_CLIENT  5    /* dBm/MHz */
 
+#ifdef CONFIG_IEEE80211AX
+/* Regulatory client EIRP PSD for the Default category, in units of 0.5 dBm/MHz,
+ * when AFC does not provide one */
+static int hostapd_reg_def_cli_eirp_psd(struct hostapd_config *iconf)
+{
+	if (iconf->reg_def_cli_eirp_psd != -1)
+		return iconf->reg_def_cli_eirp_psd;
+	return REG_PSD_MAX_TXPOWER_FOR_DEFAULT_CLIENT * 2;
+}
+#endif /* CONFIG_IEEE80211AX */
+
 u8 * hostapd_eid_txpower_envelope(struct hostapd_data *hapd, u8 *eid)
 {
 	struct hostapd_iface *iface = hapd->iface;
@@ -9993,14 +10004,8 @@ u8 * hostapd_eid_txpower_envelope(struct hostapd_data *hapd, u8 *eid)
 		/* Default Transmit Power Envelope for Global Operating Class */
 		err = hostap_afc_get_chan_max_eirp_power(iface, true,
 							 &max_eirp_psd);
-		if (err < 0) {
-			if (hapd->iconf->reg_def_cli_eirp_psd != -1)
-				max_eirp_psd =
-					hapd->iconf->reg_def_cli_eirp_psd;
-			else
-				max_eirp_psd =
-					REG_PSD_MAX_TXPOWER_FOR_DEFAULT_CLIENT * 2;
-		}
+		if (err < 0)
+			max_eirp_psd = hostapd_reg_def_cli_eirp_psd(iconf);
 
 		eid = hostapd_add_tpe_info(eid, tx_pwr_count, tx_pwr_intrpn,
 					   REG_DEFAULT_CLIENT, max_eirp_psd);
@@ -10806,6 +10811,50 @@ static u8 * hostapd_eid_nr_db(struct hostapd_data *hapd, u8 *eid,
 }
 
 
+/*
+ * 20 MHz PSD subfield for a reported 6 GHz AP: the lowest regulatory client
+ * limit in that AP's Transmit Power Envelope elements (IEEE Std 802.11-2024,
+ * 11.49), in units of 0.5 dBm/MHz.
+ */
+static u8 hostapd_rnr_6ghz_psd(struct hostapd_data *bss)
+{
+#ifdef CONFIG_IEEE80211AX
+	struct hostapd_iface *iface = bss->iface;
+	int psd, eirp;
+
+	if (hostap_afc_get_chan_max_eirp_power(iface, true, &psd) < 0) {
+		psd = hostapd_reg_def_cli_eirp_psd(iface->conf);
+		/* An indoor AP also advertises the subordinate client limit */
+		if (he_reg_is_indoor(iface->conf->he_6ghz_reg_pwr_type)) {
+			int sub = iface->conf->reg_sub_cli_eirp_psd != -1 ?
+				iface->conf->reg_sub_cli_eirp_psd :
+				REG_PSD_MAX_TXPOWER_FOR_SUBORDINATE_CLIENT * 2;
+
+			if (sub < psd)
+				psd = sub;
+		}
+	}
+
+	if (hostap_afc_get_chan_max_eirp_power(iface, false, &eirp)) {
+		eirp = iface->conf->reg_def_cli_eirp;
+		if (!he_reg_is_sp(iface->conf->he_6ghz_reg_pwr_type))
+			eirp = -1;
+	}
+	/* An EIRP limit spread over 20 MHz is a PSD limit 13 dB lower */
+	if (eirp != -1 && eirp - 26 < psd)
+		psd = eirp - 26;
+
+	if (psd < -127)
+		psd = -127;
+	else if (psd >= RNR_20_MHZ_PSD_MAX_TXPOWER)
+		psd = RNR_20_MHZ_PSD_MAX_TXPOWER - 1;
+	return (u8) psd;
+#else /* CONFIG_IEEE80211AX */
+	return RNR_20_MHZ_PSD_MAX_TXPOWER;
+#endif /* CONFIG_IEEE80211AX */
+}
+
+
 static bool hostapd_eid_rnr_bss(struct hostapd_data *hapd,
 				struct hostapd_data *reporting_hapd,
 				size_t i, u8 *tbtt_count, size_t *len,
@@ -10863,7 +10912,8 @@ static bool hostapd_eid_rnr_bss(struct hostapd_data *hapd,
 	bss_param |= RNR_BSS_PARAM_CO_LOCATED;
 
 	*eid++ = bss_param;
-	*eid++ = RNR_20_MHZ_PSD_MAX_TXPOWER;
+	*eid++ = is_6ghz_op_class(op_class) ? hostapd_rnr_6ghz_psd(bss) :
+		RNR_20_MHZ_PSD_MAX_TXPOWER;
 
 #ifdef CONFIG_IEEE80211BE
 	/* Include the MLD parameters only when TBTT length is for ML RNR */

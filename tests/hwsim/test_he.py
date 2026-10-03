@@ -2138,3 +2138,52 @@ def test_he_6ghz_incumbt_sig_intf_sec40(dev, apdev):
                                           expectation)
     he_6ghz_incumbt_sig_intf_bw_reduction(dev, apdev, params, '0xC',
                                           expectation)
+
+def test_he_6ghz_rnr_psd(dev, apdev):
+    """RNR 20 MHz PSD for a co-located 6 GHz AP"""
+    check_sae_capab(dev[0])
+    hapd = None
+    hapd6 = None
+    try:
+        params = {"ssid": "rnr", "country_code": "DE", "hw_mode": "g",
+                  "channel": "1", "ieee80211ax": "1", "wpa": "2",
+                  "rsn_pairwise": "CCMP", "wpa_key_mgmt": "SAE",
+                  "sae_pwe": "1", "sae_password": "password",
+                  "ieee80211w": "2", "rnr": "1",
+                  "he_6ghz_reg_pwr_type": "0",
+                  "reg_def_cli_eirp_psd": "4", "reg_sub_cli_eirp_psd": "2"}
+        hapd = hostapd.add_ap(apdev[0], params)
+        params6 = dict(params)
+        del params6["hw_mode"]
+        params6.update({"op_class": "131", "channel": "5"})
+        hapd6 = hostapd.add_ap(apdev[1], params6, set_channel=False)
+        bssid6 = hapd6.own_addr()
+
+        dev[0].scan_for_bss(hapd.own_addr(), freq="2412", force_scan=True)
+        ie = bytes.fromhex(dev[0].get_bss(hapd.own_addr())['ie'])
+        tbtts = []
+        while len(ie) >= 2:
+            eid, data = ie[0], ie[2:2 + ie[1]]
+            ie = ie[2 + ie[1]:]
+            if eid != 201:
+                continue
+            while len(data) >= 4:
+                count = (data[0] >> 4) + 1
+                tlen = data[1]
+                info = data[4:]
+                for k in range(count):
+                    tbtt = info[k * tlen:(k + 1) * tlen]
+                    if len(tbtt) >= 13:
+                        tbtts.append((tbtt[1:7].hex(':'), tbtt[12]))
+                data = info[count * tlen:]
+        logger.info("RNR entries: " + str(tbtts))
+        # The lowest regulatory client limit: the subordinate one, 1 dBm/MHz
+        if (bssid6, 2) not in tbtts:
+            raise Exception("Unexpected RNR entries: " + str(tbtts))
+    except Exception as e:
+        if isinstance(e, Exception) and str(e) == "AP startup failed":
+            if not he_supported():
+                raise HwsimSkip("HE 6 GHz channel not supported in regulatory information")
+        raise
+    finally:
+        clear_regdom(hapd, dev)
