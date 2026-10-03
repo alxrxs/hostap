@@ -5,6 +5,7 @@
 # See README for more details.
 
 import hostapd
+import time
 from utils import *
 
 
@@ -237,3 +238,35 @@ def test_ap_dscp_add_send_remove_send(dev, apdev):
     expect_dscp_event_contains(dev[0], "add policy_id=2 dscp=34")
     expect_dscp_event_contains(dev[0], "add policy_id=4 dscp=50")
     expect_dscp_event_contains(dev[0], "request_end")
+
+def test_ap_dscp_rejected_policy_then_query(dev, apdev):
+    """AP DSCP: STA rejects a policy, then sends a wildcard query"""
+
+    hapd = ap_client_connect(dev, apdev, enable_dscp=True)
+    sta = dev[0].own_addr()
+
+    set_ap_dscp_policy(hapd, sta,
+                       "policy_id=1 request_type=Add dscp=46 "
+                       "classifier_mask=0x51 ip_version=4 "
+                       "dst_port=5002 protocol=17")
+    set_ap_dscp_policy(hapd, sta,
+                       "policy_id=2 request_type=Add dscp=34 "
+                       "domain_name=video.wifitest.org")
+    send_unsolicited_dscp_req(hapd, sta, 0, [1, 2])
+    expect_dscp_event_contains(dev[0], "request_start")
+    expect_dscp_event_contains(dev[0], "add policy_id=1")
+    expect_dscp_event_contains(dev[0], "add policy_id=2")
+    expect_dscp_event_contains(dev[0], "request_end")
+
+    if "OK" not in dev[0].request("DSCP_RESP policy_id=1 status=1 policy_id=2 status=0"):
+        raise Exception("DSCP_RESP failed")
+    time.sleep(0.1)
+
+    # The rejected policy is gone; the query gets the other one
+    if "OK" not in dev[0].request("DSCP_QUERY wildcard"):
+        raise Exception("DSCP_QUERY failed")
+    expect_dscp_event_contains(dev[0], "request_start")
+    expect_dscp_event_contains(dev[0], "add policy_id=2")
+    expect_dscp_event_contains(dev[0], "request_end")
+    if "PONG" not in hapd.request("PING"):
+        raise Exception("hostapd did not survive the query")
