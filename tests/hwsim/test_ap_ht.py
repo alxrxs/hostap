@@ -490,6 +490,42 @@ def test_ap_ht40_5ghz_switch(dev, apdev):
             hapd2.request("DISABLE")
         set_world_reg(apdev[0], apdev[1], dev[0])
 
+def test_ap_ht40_5ghz_no_pri_sec_switch(dev, apdev):
+    """HT40 on 5 GHz keeps the configured channels with no_pri_sec_switch"""
+    clear_scan_cache(apdev[0])
+    try:
+        hapd = None
+        hapd2 = None
+        params = {"ssid": "test-ht40",
+                  "hw_mode": "a",
+                  "channel": "36",
+                  "country_code": "US",
+                  "ht_capab": "[HT40+]"}
+        hapd2 = hostapd.add_ap(apdev[1], params)
+
+        # Without the option, the scan switches this to primary 36
+        params = {"ssid": "test-ht40",
+                  "hw_mode": "a",
+                  "channel": "40",
+                  "ht_capab": "[HT40-]",
+                  "no_pri_sec_switch": "1"}
+        hapd = hostapd.add_ap(apdev[0], params)
+
+        pri = hapd.get_status_field("channel")
+        if pri != "40":
+            raise Exception("Unexpected primary channel: " + pri)
+        sec = hapd.get_status_field("secondary_channel")
+        if sec != "-1":
+            raise Exception("Unexpected secondary channel: " + sec)
+        dev[0].connect("test-ht40", key_mgmt="NONE", scan_freq="5200")
+    finally:
+        dev[0].request("DISCONNECT")
+        if hapd:
+            hapd.request("DISABLE")
+        if hapd2:
+            hapd2.request("DISABLE")
+        set_world_reg(apdev[0], apdev[1], dev[0])
+
 def test_ap_ht40_5ghz_switch2(dev, apdev):
     """HT40 co-ex scan on 5 GHz switching pri/sec channel (2)"""
     clear_scan_cache(apdev[0])

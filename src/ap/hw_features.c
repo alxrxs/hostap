@@ -621,8 +621,13 @@ static int ieee80211n_check_40mhz(struct hostapd_iface *iface)
 	int ret;
 
 	/* Check that HT40 is used and PRI / SEC switch is allowed */
-	if (!iface->conf->secondary_channel || iface->conf->no_pri_sec_switch)
+	if (!iface->conf->secondary_channel)
 		return 0;
+	if (iface->conf->no_pri_sec_switch) {
+		/* Restored after a 20/40 MHz coexistence fallback */
+		iface->secondary_ch = iface->conf->secondary_channel;
+		return 0;
+	}
 
 	hostapd_set_state(iface, HAPD_IFACE_HT_SCAN);
 	wpa_printf(MSG_DEBUG, "Scan for neighboring BSSes prior to enabling "
