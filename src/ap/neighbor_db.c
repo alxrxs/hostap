@@ -274,7 +274,11 @@ void hostapd_neighbor_set_own_report(struct hostapd_data *hapd)
 		bssid_info |= NEI_REP_BSSID_INFO_HE;
 	if (eht)
 		bssid_info |= NEI_REP_BSSID_INFO_EHT;
-	/* TODO: Set NEI_REP_BSSID_INFO_MOBILITY_DOMAIN if MDE is set */
+#ifdef CONFIG_IEEE80211R_AP
+	/* The own MDE is identical to itself (IEEE Std 802.11-2024, 9.4.2.35) */
+	if (hapd->conf->wpa && wpa_key_mgmt_ft(hapd->conf->wpa_key_mgmt))
+		bssid_info |= NEI_REP_BSSID_INFO_MOBILITY_DOMAIN;
+#endif /* CONFIG_IEEE80211R_AP */
 
 	hostapd_get_oper_chan_info_of_bss(hapd, &oper_chwidth,
 					  &center_freq1_idx, &center_freq2_idx);
