@@ -3117,6 +3117,11 @@ static int nl80211_action_subscribe_ap(struct i802_bss *bss)
 	/* RRM Measurement Report */
 	if (nl80211_register_action_frame(bss, (u8 *) "\x05\x01", 2) < 0)
 		ret = -1;
+	/* RRM Link Measurement Request, answered with the TX power the driver
+	 * inserts */
+	if ((bss->drv->capa.rrm_flags & WPA_DRIVER_FLAGS_TX_POWER_INSERTION) &&
+	    nl80211_register_action_frame(bss, (u8 *) "\x05\x02", 2) < 0)
+		ret = -1;
 	/* RRM Link Measurement Report */
 	if (nl80211_register_action_frame(bss, (u8 *) "\x05\x03", 2) < 0)
 		ret = -1;
