@@ -1969,6 +1969,39 @@ def test_wnm_bss_transition_mgmt_query_disabled_on_ap(dev, apdev):
     if ev is not None:
         raise Exception("Unexpected BSS TM Response reported")
 
+def test_wnm_bss_transition_mgmt_query_candidates(dev, apdev):
+    """WNM BSS Transition Management query answered with candidates"""
+    params = {"ssid": "test-wnm", "bss_transition": "1",
+              "rrm_neighbor_report": "1"}
+    hapd0 = hostapd.add_ap(apdev[0], params)
+    hapd1 = hostapd.add_ap(apdev[1], params)
+    bssid0 = hapd0.own_addr()
+    bssid1 = hapd1.own_addr()
+
+    # Exclude the own BSS (preference 0); 100 is renumbered to 255
+    for bssid, pref in ((bssid0, "00"), (bssid1, "64")):
+        nr = bssid.replace(':', '') + "0f000000" + "51" + "01" + "07" + \
+            "0301" + pref
+        if "OK" not in hapd0.request("SET_NEIGHBOR " + bssid +
+                                     " ssid=\"test-wnm\" nr=" + nr):
+            raise Exception("SET_NEIGHBOR failed")
+
+    dev[0].scan_for_bss(bssid1, 2412)
+    dev[0].scan_for_bss(bssid0, 2412)
+    dev[0].connect("test-wnm", key_mgmt="NONE", bssid=bssid0,
+                   scan_freq="2412")
+    dev[0].set_network(0, "bssid", "")
+    dev[0].request("WNM_BSS_QUERY 0")
+
+    ev = hapd0.wait_event(["BSS-TM-RESP"], timeout=5)
+    if ev is None:
+        raise Exception("No BSS Transition Management Response")
+    if "status_code=0" not in ev or "target_bssid=" + bssid1 not in ev:
+        raise Exception("Unexpected BSS TM Response: " + ev)
+    dev[0].wait_connected(timeout=10)
+    if dev[0].get_status_field("bssid") != bssid1:
+        raise Exception("STA did not move to the preferred candidate")
+
 def test_wnm_bss_transition_mgmt_query_mbo(dev, apdev):
     """WNM BSS Transition Management query - TM only due to MBO on AP"""
     hapd = start_wnm_ap(apdev[0], bss_transition=False, mbo=True)
