@@ -2138,3 +2138,65 @@ def test_he_6ghz_incumbt_sig_intf_sec40(dev, apdev):
                                           expectation)
     he_6ghz_incumbt_sig_intf_bw_reduction(dev, apdev, params, '0xC',
                                           expectation)
+
+def run_he_6ghz_colocated_ess(dev, apdev, member):
+    check_sae_capab(dev[0])
+    hapd = None
+    try:
+        params = {"ssid": "coloc", "country_code": "DE", "hw_mode": "g",
+                  "channel": "1", "ieee80211ax": "1", "wpa": "2",
+                  "rsn_pairwise": "CCMP", "wpa_key_mgmt": "SAE",
+                  "sae_pwe": "1", "sae_password": "password",
+                  "ieee80211w": "2", "rnr": "1",
+                  "rrm_neighbor_report": "1"}
+        hapd = hostapd.add_ap(apdev[0], params)
+        params6 = dict(params)
+        del params6["hw_mode"]
+        params6.update({"op_class": "131", "channel": "5",
+                        "member_of_colocated_6ghz_ess": member})
+        hapd6 = hostapd.add_ap(apdev[1], params6, set_channel=False)
+        bssid6 = hapd6.own_addr()
+
+        dev[0].scan_for_bss(hapd.own_addr(), freq="2412", force_scan=True)
+        ie = bytes.fromhex(dev[0].get_bss(hapd.own_addr())['ie'])
+        params_6ghz = None
+        while len(ie) >= 2:
+            eid, data = ie[0], ie[2:2 + ie[1]]
+            ie = ie[2 + ie[1]:]
+            if eid != 201:
+                continue
+            while len(data) >= 4:
+                count = (data[0] >> 4) + 1
+                tlen = data[1]
+                info = data[4:]
+                for k in range(count):
+                    tbtt = info[k * tlen:(k + 1) * tlen]
+                    if len(tbtt) >= 12 and tbtt[1:7].hex(':') == bssid6:
+                        params_6ghz = tbtt[11]
+                data = info[count * tlen:]
+        if params_6ghz is None:
+            raise Exception("6 GHz AP not in the RNR")
+        if bool(params_6ghz & 0x10) != (member == "1"):
+            raise Exception("Unexpected BSS Parameters 0x%02x" % params_6ghz)
+
+        own = [l for l in hapd6.request("SHOW_NEIGHBOR").splitlines()
+               if l.startswith(bssid6)][0]
+        nr = bytes.fromhex(own.split("nr=")[1].split()[0])
+        bssid_info = int.from_bytes(nr[6:10], 'little')
+        if bool(bssid_info & (1 << 18)) != (member == "1"):
+            raise Exception("Unexpected BSSID Information 0x%08x" % bssid_info)
+    except Exception as e:
+        if isinstance(e, Exception) and str(e) == "AP startup failed":
+            if not he_supported():
+                raise HwsimSkip("HE 6 GHz channel not supported in regulatory information")
+        raise
+    finally:
+        clear_regdom(hapd, dev)
+
+def test_he_6ghz_colocated_ess(dev, apdev):
+    """6 GHz AP member of an ESS with co-located 2.4/5 GHz APs"""
+    run_he_6ghz_colocated_ess(dev, apdev, "1")
+
+def test_he_6ghz_colocated_ess_not_member(dev, apdev):
+    """6 GHz AP not declared a member of a co-located ESS"""
+    run_he_6ghz_colocated_ess(dev, apdev, "0")

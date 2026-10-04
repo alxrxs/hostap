@@ -10860,6 +10860,10 @@ static bool hostapd_eid_rnr_bss(struct hostapd_data *hapd,
 	    bss->conf->unsol_bcast_probe_resp_interval)
 		bss_param |= RNR_BSS_PARAM_UNSOLIC_PROBE_RESP_ACTIVE;
 
+	if (is_6ghz_op_class(op_class) &&
+	    bss->conf->member_of_colocated_6ghz_ess)
+		bss_param |= RNR_BSS_PARAM_MEMBER_CO_LOCATED_ESS;
+
 	bss_param |= RNR_BSS_PARAM_CO_LOCATED;
 
 	*eid++ = bss_param;

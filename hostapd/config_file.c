@@ -3896,6 +3896,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			return 1;
 		}
 		bss->unsol_bcast_probe_resp_interval = val;
+	} else if (os_strcmp(buf, "member_of_colocated_6ghz_ess") == 0) {
+		bss->member_of_colocated_6ghz_ess = atoi(pos);
 #ifdef CONFIG_AFC
 	} else if (os_strcmp(buf, "afcd_sock") == 0) {
 		os_free(conf->afc.socket);

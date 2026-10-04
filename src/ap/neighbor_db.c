@@ -290,6 +290,9 @@ void hostapd_neighbor_set_own_report(struct hostapd_data *hapd)
 					  &op_class, &channel) ==
 	    NUM_HOSTAPD_MODES)
 		return;
+	if (is_6ghz_op_class(op_class) &&
+	    hapd->conf->member_of_colocated_6ghz_ess)
+		bssid_info |= NEI_REP_BSSID_INFO_MEMBER_OF_ESS_WITH_COLOC_AP;
 	width = hostapd_get_nr_chan_width(hapd, ht, vht, he, oper_chwidth,
 					  secondary_channel);
 

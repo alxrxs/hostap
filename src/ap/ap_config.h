@@ -995,6 +995,9 @@ struct hostapd_bss_config {
 
 	unsigned int unsol_bcast_probe_resp_interval;
 
+	/* dot11MemberOfColocated6GHzESSOptionActivated (6 GHz only) */
+	bool member_of_colocated_6ghz_ess;
+
 	u8 ext_capa_mask[EXT_CAPA_MAX_LEN];
 	u8 ext_capa[EXT_CAPA_MAX_LEN];
 
