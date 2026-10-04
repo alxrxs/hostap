@@ -24,9 +24,13 @@
 #define OCE_STA_CFON_ENABLED(hapd) \
 	((hapd->conf->oce & OCE_STA_CFON) && \
 	 (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_OCE_STA_CFON))
+/* An OCE AP needs a driver that implements its Probe Request frame handling,
+ * or hostapd to handle Probe Request frames itself */
 #define OCE_AP_ENABLED(hapd) \
 	((hapd->conf->oce & OCE_AP) && \
-	 (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_OCE_AP))
+	 ((hapd->iface->drv_flags & WPA_DRIVER_FLAGS_OCE_AP) || \
+	  ((hapd->iface->drv_flags2 & WPA_DRIVER_FLAGS2_AP_SME) && \
+	   !(hapd->iface->drv_flags & WPA_DRIVER_FLAGS_PROBE_RESP_OFFLOAD))))
 
 struct wpa_ctrl_dst;
 struct radius_server_data;
