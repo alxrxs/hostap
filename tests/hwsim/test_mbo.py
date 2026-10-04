@@ -623,6 +623,53 @@ def check_mbo_anqp(dev, bssid, cell_data_conn_pref):
 
     dev.dump_monitor()
 
+def test_mbo_anqp_neighbor_report(dev, apdev):
+    """MBO ANQP Neighbor Report from the neighbor report database"""
+    params = {'ssid': "test-wnm-mbo",
+              'mbo': '1',
+              'interworking': '1',
+              'rrm_neighbor_report': '1'}
+    hapd = hostapd.add_ap(apdev[0], params)
+    bssid = hapd.own_addr()
+    # A neighbor with a configured preference that is not 255
+    nr = "020000009900" + "0f000000" + "51" + "01" + "07" + "030164"
+    if "OK" not in hapd.request("SET_NEIGHBOR 02:00:00:00:99:00 ssid=\"test-wnm-mbo\" nr=" + nr):
+        raise Exception("SET_NEIGHBOR failed")
+
+    dev[0].scan_for_bss(bssid, freq="2412", force_scan=True)
+    if "OK" not in dev[0].request("ANQP_GET " + bssid + " 257,272"):
+        raise Exception("ANQP_GET command failed")
+    ev = dev[0].wait_event(["GAS-QUERY-DONE"], timeout=10)
+    if ev is None:
+        raise Exception("GAS query timed out")
+
+    bss = dev[0].get_bss(bssid)
+    capab = bytes.fromhex(bss['anqp_capability_list'])
+    if b'\x10\x01' not in capab:
+        raise Exception("Neighbor Report not in the ANQP Capability List")
+    if 'anqp[272]' not in bss:
+        raise Exception("No Neighbor Report ANQP-element received")
+    buf = bytes.fromhex(bss['anqp[272]'])
+    prefs = {}
+    while len(buf) >= 2:
+        eid, elen = buf[0], buf[1]
+        elem = buf[2:2 + elen]
+        buf = buf[2 + elen:]
+        if eid != 52 or elen < 13:
+            raise Exception("Unexpected element %d in the Neighbor Report" % eid)
+        sub = elem[13:]
+        pref = None
+        while len(sub) >= 2:
+            if sub[0] == 3 and sub[1] >= 1:
+                pref = sub[2]
+            sub = sub[2 + sub[1]:]
+        prefs[elem[0:6].hex(':')] = pref
+    logger.info("Candidate preferences: " + str(prefs))
+    if prefs.get(bssid) != 255:
+        raise Exception("Own BSS not the most preferred candidate")
+    if prefs.get("02:00:00:00:99:00") != 254:
+        raise Exception("Neighbor preference not renumbered to 254")
+
 def test_mbo_anqp(dev, apdev):
     """MBO ANQP"""
     params = {'ssid': "test-wnm-mbo",
