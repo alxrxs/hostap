@@ -291,6 +291,14 @@ static inline int hostapd_drv_get_survey(struct hostapd_data *hapd,
 	return hapd->driver->get_survey(hapd->drv_priv, freq);
 }
 
+static inline int hostapd_drv_get_tx_power(struct hostapd_data *hapd,
+					   int *tx_power)
+{
+	if (!hapd->driver || !hapd->driver->get_tx_power)
+		return -1;
+	return hapd->driver->get_tx_power(hapd->drv_priv, tx_power);
+}
+
 static inline int hostapd_get_country(struct hostapd_data *hapd, char *alpha2)
 {
 	if (hapd->driver == NULL || hapd->driver->get_country == NULL)

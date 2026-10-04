@@ -764,6 +764,8 @@ struct hostapd_bss_config {
 	 */
 	unsigned int oce;
 	int mbo_cell_data_conn_pref;
+	u8 oce_ip_subnet_id[ETH_ALEN];
+	bool oce_ip_subnet_id_set;
 #endif /* CONFIG_MBO */
 
 	int ftm_responder;

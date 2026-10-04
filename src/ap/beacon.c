@@ -2373,6 +2373,15 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 
 	os_memset(params, 0, sizeof(*params));
 
+#ifdef CONFIG_MBO
+	/* For the Transmit Power attribute of Beacon and Probe Response
+	 * frames */
+	if (OCE_AP_ENABLED(hapd))
+		hapd->iface->tx_power_known =
+			hostapd_drv_get_tx_power(hapd,
+						 &hapd->iface->tx_power) == 0;
+#endif /* CONFIG_MBO */
+
 #ifdef NEED_AP_MLME
 #define BEACON_HEAD_BUF_SIZE 256
 #define BEACON_TAIL_BUF_SIZE 1500

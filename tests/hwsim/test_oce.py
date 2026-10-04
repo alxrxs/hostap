@@ -272,3 +272,32 @@ def test_oce_ap_probe_max_channel_time(dev, apdev, params):
     da = oce_probe_resp_da(dev[0], hapd, params, "ff0302000a")
     if dev[0].own_addr() not in da:
         raise Exception("No Probe Response frame with a short Max Channel Time")
+
+def oce_ap_attrs(dev, bssid):
+    ie = bytes.fromhex(dev.get_bss(bssid)['ie'])
+    attrs = {}
+    while len(ie) >= 2:
+        eid, elen, data = ie[0], ie[1], ie[2:2 + ie[1]]
+        ie = ie[2 + elen:]
+        if eid == 221 and data[0:4] == b'\x50\x6f\x9a\x16':
+            buf = data[4:]
+            while len(buf) >= 2:
+                attrs[buf[0]] = buf[2:2 + buf[1]]
+                buf = buf[2 + buf[1]:]
+    return attrs
+
+def test_oce_ap_tx_power_ip_subnet(dev, apdev):
+    """OCE AP Transmit Power and IP Subnet Identifier attributes"""
+    params = oce_ap_params("test-oce")
+    params["oce_ip_subnet_id"] = "020000000100"
+    hapd = hostapd.add_ap(apdev[0], params)
+    dev[0].scan_for_bss(hapd.own_addr(), freq="2412")
+    attrs = oce_ap_attrs(dev[0], hapd.own_addr())
+    if 107 not in attrs or len(attrs[107]) != 1:
+        raise Exception("No Transmit Power attribute")
+    tx_power = struct.unpack('b', attrs[107])[0]
+    logger.info("Transmit Power: %d dBm" % tx_power)
+    if tx_power <= 0:
+        raise Exception("Unexpected Transmit Power: %d dBm" % tx_power)
+    if attrs.get(108) != bytes.fromhex("020000000100"):
+        raise Exception("No IP Subnet Identifier attribute")
