@@ -301,3 +301,59 @@ def test_oce_ap_tx_power_ip_subnet(dev, apdev):
         raise Exception("Unexpected Transmit Power: %d dBm" % tx_power)
     if attrs.get(108) != bytes.fromhex("020000000100"):
         raise Exception("No IP Subnet Identifier attribute")
+
+def oce_bss_elems(dev, bssid):
+    ie = bytes.fromhex(dev.get_bss(bssid)['ie'])
+    elems = []
+    while len(ie) >= 2:
+        elems.append((ie[0], ie[2:2 + ie[1]]))
+        ie = ie[2 + ie[1]:]
+    return elems
+
+def test_oce_ap_colocated_rnr(dev, apdev):
+    """OCE AP reports co-located 2.4/5 GHz BSSs and their channels"""
+    params = oce_ap_params("test-oce")
+    params["rrm_neighbor_report"] = "1"
+    params["channel"] = "1"
+    hapd0 = hostapd.add_ap(apdev[0], params)
+    params["channel"] = "11"
+    hapd1 = hostapd.add_ap(apdev[1], params)
+
+    own = hapd1.request("SHOW_NEIGHBOR").split()
+    if "OK" not in hapd0.request("SET_NEIGHBOR " + own[0] + " " + own[1] +
+                                 " " + own[2]):
+        raise Exception("SET_NEIGHBOR failed")
+    hapd0.request("UPDATE_BEACON")
+    bssid0 = hapd0.own_addr()
+    bssid1 = hapd1.own_addr()
+    dev[0].scan_for_bss(bssid0, freq="2412", force_scan=True)
+    elems = oce_bss_elems(dev[0], bssid0)
+
+    rnr = [e for i, e in elems if i == 201]
+    if not rnr:
+        raise Exception("No Reduced Neighbor Report element")
+    found = False
+    for e in rnr:
+        pos = e
+        while len(pos) >= 4:
+            count = (pos[0] >> 4) + 1
+            tlen = pos[1]
+            op_class, chan = pos[2], pos[3]
+            info = pos[4:]
+            for k in range(count):
+                tbtt = info[k * tlen:(k + 1) * tlen]
+                if len(tbtt) >= 7 and tbtt[1:7].hex(':') == bssid1:
+                    if op_class != 81 or chan != 11:
+                        raise Exception("Unexpected op class/channel %d/%d"
+                                        % (op_class, chan))
+                    found = True
+            pos = info[count * tlen:]
+    if not found:
+        raise Exception("Co-located BSS not in the RNR")
+
+    acr = [e for i, e in elems if i == 51]
+    if acr != [bytes([81, 11])]:
+        raise Exception("Unexpected AP Channel Report: " + str(acr))
+    rm = [e for i, e in elems if i == 70]
+    if not rm or not rm[0][2] & 0x01:
+        raise Exception("AP Channel Report capability not set")

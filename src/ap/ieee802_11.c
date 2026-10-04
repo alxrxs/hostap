@@ -558,13 +558,120 @@ u8 * hostapd_eid_ext_supp_rates(struct hostapd_data *hapd, u8 *eid)
 }
 
 
+/* An OCE AP in the 2.4 or 5 GHz band */
+bool hostapd_oce_lower_band(struct hostapd_data *hapd)
+{
+#ifdef CONFIG_MBO
+	return OCE_AP_ENABLED(hapd) && !is_6ghz_op_class(hapd->iconf->op_class);
+#else /* CONFIG_MBO */
+	return false;
+#endif /* CONFIG_MBO */
+}
+
+
+/*
+ * Channels of the neighbor APs in the neighbor report database for the AP
+ * Channel Report elements of an OCE AP in the 2.4 or 5 GHz band (Wi-Fi Optimized
+ * Connectivity 3.4): other than the own channel and co-located 6 GHz APs,
+ * which the Reduced Neighbor Report element covers, by 20 MHz operating class.
+ */
+static size_t hostapd_ap_channels(struct hostapd_data *hapd, u8 *op_classes,
+				  u8 *channels, size_t max)
+{
+	struct hostapd_neighbor_entry *nr;
+	size_t n = 0, i;
+
+	if (!hostapd_oce_lower_band(hapd))
+		return 0;
+
+	dl_list_for_each(nr, &hapd->nr_db, struct hostapd_neighbor_entry,
+			 list) {
+		const u8 *pos;
+		u8 op_class, channel;
+		int freq;
+
+		if (!nr->nr || wpabuf_len(nr->nr) < 13 || n == max)
+			continue;
+		pos = wpabuf_head_u8(nr->nr);
+		freq = ieee80211_chan_to_freq(NULL, pos[10], pos[11]);
+		if (freq <= 0 || freq == hapd->iface->freq ||
+		    (is_6ghz_freq(freq) &&
+		     (WPA_GET_LE32(&pos[6]) & NEI_REP_BSSID_INFO_COLOCATED_AP)))
+			continue;
+		if (ieee80211_freq_to_channel_ext(freq, 0,
+						  CONF_OPER_CHWIDTH_USE_HT,
+						  &op_class, &channel) ==
+		    NUM_HOSTAPD_MODES)
+			continue;
+		for (i = 0; i < n; i++) {
+			if (op_classes[i] == op_class && channels[i] == channel)
+				break;
+		}
+		if (i == n) {
+			op_classes[n] = op_class;
+			channels[n++] = channel;
+		}
+	}
+
+	return n;
+}
+
+
+size_t hostapd_eid_ap_channel_report_len(struct hostapd_data *hapd)
+{
+	u8 op_classes[32], channels[32];
+	size_t n;
+
+	n = hostapd_ap_channels(hapd, op_classes, channels, 32);
+	/* An element per operating class at most */
+	return n * 3 + n;
+}
+
+
+u8 * hostapd_eid_ap_channel_report(struct hostapd_data *hapd, u8 *eid)
+{
+	u8 op_classes[32], channels[32];
+	size_t n, i, j;
+	bool done[32];
+
+	n = hostapd_ap_channels(hapd, op_classes, channels, 32);
+	os_memset(done, 0, sizeof(done));
+	for (i = 0; i < n; i++) {
+		u8 *len;
+
+		if (done[i])
+			continue;
+		*eid++ = WLAN_EID_AP_CHANNEL_REPORT;
+		len = eid++;
+		*eid++ = op_classes[i];
+		for (j = i; j < n; j++) {
+			if (op_classes[j] != op_classes[i])
+				continue;
+			*eid++ = channels[j];
+			done[j] = true;
+		}
+		*len = eid - len - 1;
+	}
+
+	return eid;
+}
+
+
 u8 * hostapd_eid_rm_enabled_capab(struct hostapd_data *hapd, u8 *eid,
 				  size_t len)
 {
+	u8 capab[RRM_CAPABILITIES_IE_LEN];
+	u8 op_class, channel;
 	size_t i;
 
+	os_memcpy(capab, hapd->conf->radio_measurements,
+		  RRM_CAPABILITIES_IE_LEN);
+	/* dot11RMAPChannelReportActivated with AP Channel Report elements */
+	if (hostapd_ap_channels(hapd, &op_class, &channel, 1))
+		capab[2] |= WLAN_RRM_CAPS_AP_CHANNEL_REPORT;
+
 	for (i = 0; i < RRM_CAPABILITIES_IE_LEN; i++) {
-		if (hapd->conf->radio_measurements[i])
+		if (capab[i])
 			break;
 	}
 
@@ -573,7 +680,7 @@ u8 * hostapd_eid_rm_enabled_capab(struct hostapd_data *hapd, u8 *eid,
 
 	*eid++ = WLAN_EID_RRM_ENABLED_CAPABILITIES;
 	*eid++ = RRM_CAPABILITIES_IE_LEN;
-	os_memcpy(eid, hapd->conf->radio_measurements, RRM_CAPABILITIES_IE_LEN);
+	os_memcpy(eid, capab, RRM_CAPABILITIES_IE_LEN);
 
 	return eid + RRM_CAPABILITIES_IE_LEN;
 }
@@ -10473,6 +10580,14 @@ static bool hostapd_rnr_get_bss_info(struct hostapd_data *hapd,
 	    bss_chwidth == CONF_OPER_CHWIDTH_USE_HT)
 		secondary_channel = 0;
 
+	/* The operating class identifies the primary channel together with
+	 * the channel number (IEEE Std 802.11-2024, 11.49): in the 2.4 and
+	 * 5 GHz bands, the 20 MHz operating class */
+	if (!is_6ghz_freq(bss->iface->freq)) {
+		secondary_channel = 0;
+		bss_chwidth = CONF_OPER_CHWIDTH_USE_HT;
+	}
+
 	if (ieee80211_freq_to_channel_ext(
 		    bss->iface->freq,
 		    secondary_channel, bss_chwidth,
@@ -10654,6 +10769,27 @@ static enum colocation_mode get_colocation_mode(struct hostapd_data *hapd)
 }
 
 
+/* Whether to report a co-located interface: a 6 GHz one, and for an OCE AP in
+ * the 2.4 or 5 GHz band also those on other 2.4/5 GHz channels (Wi-Fi Optimized
+ * Connectivity 3.4) */
+static bool hostapd_rnr_colocated(struct hostapd_data *hapd,
+				  struct hostapd_iface *iface)
+{
+	if (!iface || iface == hapd->iface ||
+	    iface->state != HAPD_IFACE_ENABLED)
+		return false;
+	if (is_6ghz_op_class(iface->conf->op_class))
+		return true;
+#ifdef CONFIG_MBO
+	return OCE_AP_ENABLED(hapd) &&
+		!is_6ghz_op_class(hapd->iconf->op_class) &&
+		iface->freq != hapd->iface->freq;
+#else /* CONFIG_MBO */
+	return false;
+#endif /* CONFIG_MBO */
+}
+
+
 static size_t hostapd_eid_rnr_colocation_len(struct hostapd_data *hapd,
 					     size_t *current_len)
 {
@@ -10667,9 +10803,7 @@ static size_t hostapd_eid_rnr_colocation_len(struct hostapd_data *hapd,
 	for (i = 0; i < hapd->iface->interfaces->count; i++) {
 		iface = hapd->iface->interfaces->iface[i];
 
-		if (!iface || iface == hapd->iface ||
-		    iface->state != HAPD_IFACE_ENABLED ||
-		    !is_6ghz_op_class(iface->conf->op_class))
+		if (!hostapd_rnr_colocated(hapd, iface))
 			continue;
 
 		len += hostapd_eid_rnr_iface_len(iface->bss[0], hapd,
@@ -10725,7 +10859,7 @@ size_t hostapd_eid_rnr_len(struct hostapd_data *hapd, u32 type,
 			total_len += hostapd_eid_nr_db_len(hapd, &current_len);
 		/* fallthrough */
 	case WLAN_FC_STYPE_PROBE_RESP:
-		if (mode == COLOCATED_LOWER_BAND)
+		if (mode == COLOCATED_LOWER_BAND || hostapd_oce_lower_band(hapd))
 			total_len +=
 				hostapd_eid_rnr_colocation_len(hapd,
 							       &current_len);
@@ -11096,9 +11230,7 @@ static u8 * hostapd_eid_rnr_colocation(struct hostapd_data *hapd, u8 *eid,
 	for (i = 0; i < hapd->iface->interfaces->count; i++) {
 		iface = hapd->iface->interfaces->iface[i];
 
-		if (!iface || iface == hapd->iface ||
-		    iface->state != HAPD_IFACE_ENABLED ||
-		    !is_6ghz_op_class(iface->conf->op_class))
+		if (!hostapd_rnr_colocated(hapd, iface))
 			continue;
 
 		eid = hostapd_eid_rnr_iface(iface->bss[0], hapd, eid,
@@ -11154,7 +11286,7 @@ u8 * hostapd_eid_rnr(struct hostapd_data *hapd, u8 *eid, u32 type,
 			eid = hostapd_eid_nr_db(hapd, eid, &current_len);
 		/* fallthrough */
 	case WLAN_FC_STYPE_PROBE_RESP:
-		if (mode == COLOCATED_LOWER_BAND)
+		if (mode == COLOCATED_LOWER_BAND || hostapd_oce_lower_band(hapd))
 			eid = hostapd_eid_rnr_colocation(hapd, eid,
 							 &current_len);
 

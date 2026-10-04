@@ -235,6 +235,9 @@ void ap_copy_sta_supp_op_classes(struct sta_info *sta,
 
 u8 * hostapd_eid_fils_indic(struct hostapd_data *hapd, u8 *eid, int hessid);
 u8 * hostapd_eid_esp(struct hostapd_data *hapd, u8 *eid);
+bool hostapd_oce_lower_band(struct hostapd_data *hapd);
+size_t hostapd_eid_ap_channel_report_len(struct hostapd_data *hapd);
+u8 * hostapd_eid_ap_channel_report(struct hostapd_data *hapd, u8 *eid);
 void ieee802_11_finish_fils_auth(struct hostapd_data *hapd,
 				 struct sta_info *sta, int success,
 				 struct wpabuf *erp_resp,

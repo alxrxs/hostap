@@ -844,6 +844,7 @@ static size_t hostapd_probe_resp_elems_len(struct hostapd_data *hapd,
 					 params->known_bss_len, NULL);
 	buflen += hostapd_eid_rnr_len(hapd, WLAN_FC_STYPE_PROBE_RESP, true);
 	buflen += 6; /* Estimated Service Parameters Inbound element */
+	buflen += hostapd_eid_ap_channel_report_len(hapd);
 
 #ifdef CONFIG_IEEE80211BN
 	if (hostapd_is_uhr_enabled(hapd)) {
@@ -909,6 +910,7 @@ static u8 * hostapd_probe_resp_fill_elems(struct hostapd_data *hapd,
 
 	pos = hostapd_get_rsne(hapd, pos, epos - pos);
 	pos = hostapd_eid_bss_load(hapd, pos, epos - pos);
+	pos = hostapd_eid_ap_channel_report(hapd, pos);
 	pos = hostapd_eid_mbssid(hapd_probed, pos, epos,
 				 WLAN_FC_STYPE_PROBE_RESP, 0,
 				 NULL, params->known_bss, params->known_bss_len,
@@ -2440,6 +2442,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 		tail_len += 5; /* Multiple BSSID Configuration element */
 	tail_len += hostapd_eid_rnr_len(hapd, WLAN_FC_STYPE_BEACON, true);
 	tail_len += 6; /* Estimated Service Parameters Inbound element */
+	tail_len += hostapd_eid_ap_channel_report_len(hapd);
 
 #ifdef CONFIG_IEEE80211BN
 	if (hostapd_is_uhr_enabled(hapd))
@@ -2520,6 +2523,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 
 	tailpos = hostapd_get_rsne(hapd, tailpos, tailend - tailpos);
 	tailpos = hostapd_eid_bss_load(hapd, tailpos, tailend - tailpos);
+	tailpos = hostapd_eid_ap_channel_report(hapd, tailpos);
 	tailpos = hostapd_eid_rm_enabled_capab(hapd, tailpos,
 					       tailend - tailpos);
 	tailpos = hostapd_get_mde(hapd, tailpos, tailend - tailpos);
@@ -3503,7 +3507,8 @@ int ieee802_11_set_beacon(struct hostapd_data *hapd)
 	hapd_mld = hapd->conf->mld_ap;
 #endif /* CONFIG_IEEE80211BE */
 
-	/* Update Beacon frames in case of 6 GHz colocation or AP MLD */
+	/* Update Beacon frames in case of 6 GHz colocation, AP MLD, or OCE APs
+	 * reporting each other in the 2.4 and 5 GHz bands */
 	is_6g = is_6ghz_op_class(iface->conf->op_class);
 	for (j = 0; j < iface->interfaces->count; j++) {
 		struct hostapd_iface *other;
@@ -3515,14 +3520,16 @@ int ieee802_11_set_beacon(struct hostapd_data *hapd)
 
 		other_iface_6g = is_6ghz_op_class(other->conf->op_class);
 
-		if (is_6g == other_iface_6g && !hapd_mld)
+		if (is_6g == other_iface_6g && !hapd_mld &&
+		    (is_6g || !hostapd_oce_lower_band(other->bss[0])))
 			continue;
 
 		for (i = 0; i < other->num_bss; i++) {
 #ifdef CONFIG_IEEE80211BE
 			if (is_6g == other_iface_6g &&
 			    !(hapd_mld && other->bss[i]->conf->mld_ap &&
-			      hostapd_is_ml_partner(hapd, other->bss[i])))
+			      hostapd_is_ml_partner(hapd, other->bss[i])) &&
+			    (is_6g || !hostapd_oce_lower_band(other->bss[i])))
 				continue;
 #endif /* CONFIG_IEEE80211BE */
 
