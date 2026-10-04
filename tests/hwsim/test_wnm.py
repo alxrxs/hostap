@@ -1162,7 +1162,7 @@ def test_wnm_bss_tm_errors(dev, apdev):
              "BSS_TM_REQ %s neighbor=02:11:22:33:44:55,0,0,0,0,q" % addr,
              "BSS_TM_REQ %s neighbor=02:11:22:33:44:55,0,0,0,0,0q" % addr,
              "BSS_TM_REQ " + addr + " url=" + 256*'a',
-             "BSS_TM_REQ %s url=foo mbo=1:2" % addr,
+             "BSS_TM_REQ %s url=foo mbo=1" % addr,
              "BSS_TM_REQ %s url=foo mbo=100000:0:0" % addr,
              "BSS_TM_REQ %s url=foo mbo=0:0:254" % addr,
              "BSS_TM_REQ %s url=foo mbo=0:100000:0" % addr]
@@ -1877,10 +1877,34 @@ def test_wnm_action_proto_no_pmf(dev, apdev):
     if ev is None:
         raise Exception("Key Data not ignored")
 
+def test_wnm_bss_tm_req_mbo_no_cell(dev, apdev):
+    """WNM BSS transition request with MBO IE to a STA without cellular data"""
+    ssid = "test-wnm-mbo"
+    hapd = start_wnm_ap(apdev[0], rsn=True, pmf=True, ssid=ssid)
+    dev[0].connect(ssid, psk="12345678", key_mgmt="WPA-PSK-SHA256",
+                   proto="WPA2", ieee80211w="2", scan_freq="2412")
+    addr = dev[0].own_addr()
+
+    # The Cellular Data Connection Preference is only for STAs that
+    # indicated a cellular data connection
+    for mbo in ("mbo=4:0:1", "mbo=4:0"):
+        if "OK" not in hapd.request("BSS_TM_REQ " + addr + " " + mbo):
+            raise Exception("BSS_TM_REQ with " + mbo + " failed")
+        ev = dev[0].wait_event(['MBO-TRANSITION-REASON',
+                                'MBO-CELL-PREFERENCE'], 1)
+        if ev is None or "MBO-TRANSITION-REASON" not in ev or \
+           "reason=4" not in ev:
+            raise Exception("No MBO-TRANSITION-REASON event: " + str(ev))
+        ev = dev[0].wait_event(['MBO-CELL-PREFERENCE'], 0.2)
+        if ev is not None:
+            raise Exception("Unexpected MBO-CELL-PREFERENCE event")
+        hapd.wait_event(['BSS-TM-RESP'], timeout=5)
+        dev[0].dump_monitor()
+
 def test_wnm_bss_tm_req_with_mbo_ie(dev, apdev):
     """WNM BSS transition request with MBO IE and reassociation delay attribute"""
     ssid = "test-wnm-mbo"
-    hapd = start_wnm_ap(apdev[0], rsn=True, pmf=True, ssid=ssid)
+    hapd = start_wnm_ap(apdev[0], rsn=True, pmf=True, ssid=ssid, mbo=True)
     bssid = apdev[0]['bssid']
     if "OK" not in dev[0].request("SET mbo_cell_capa 1"):
         raise Exception("Failed to set STA as cellular data capable")
