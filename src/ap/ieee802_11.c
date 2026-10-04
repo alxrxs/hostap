@@ -7487,16 +7487,6 @@ static u16 send_assoc_resp(struct hostapd_data *hapd, struct sta_info *sta,
 	/* Radio measurement capabilities */
 	p = hostapd_eid_rm_enabled_capab(hapd, p, buf + buflen - p);
 
-#ifdef CONFIG_MBO
-	if (status_code == WLAN_STATUS_DENIED_POOR_CHANNEL_CONDITIONS &&
-	    rssi != 0) {
-		int delta = hapd->iconf->rssi_reject_assoc_rssi - rssi;
-
-		p = hostapd_eid_mbo_rssi_assoc_rej(hapd, p, buf + buflen - p,
-						   delta);
-	}
-#endif /* CONFIG_MBO */
-
 #ifdef CONFIG_IEEE80211R_AP
 	if (sta && status_code == WLAN_STATUS_SUCCESS) {
 		/* IEEE 802.11r: Mobility Domain Information, Fast BSS
@@ -7810,7 +7800,15 @@ rsnxe_done:
 		p = hostapd_eid_p2p_manage(hapd, p);
 #endif /* CONFIG_P2P_MANAGER */
 
-	p = hostapd_eid_mbo(hapd, p, buf + buflen - p);
+#ifdef CONFIG_MBO
+	if (status_code == WLAN_STATUS_DENIED_POOR_CHANNEL_CONDITIONS &&
+	    rssi != 0)
+		p = hostapd_eid_mbo_rssi_assoc_rej(
+			hapd, p, buf + buflen - p,
+			hapd->iconf->rssi_reject_assoc_rssi - rssi);
+	else
+#endif /* CONFIG_MBO */
+		p = hostapd_eid_mbo(hapd, p, buf + buflen - p);
 	p = hostapd_eid_wfa_capab(hapd, sta, p);
 
 	if (hapd->conf->assocresp_elements &&

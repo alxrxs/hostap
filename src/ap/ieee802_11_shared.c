@@ -791,30 +791,30 @@ u8 * hostapd_eid_bss_max_idle_period(struct hostapd_data *hapd, u8 *eid,
 
 #ifdef CONFIG_MBO
 
-u8 * hostapd_eid_mbo_rssi_assoc_rej(struct hostapd_data *hapd, u8 *eid,
-				    size_t len, int delta)
+/*
+ * The MBO-OCE element; with a delta, an (Re)Association Response frame that
+ * rejects the STA for its RSSI, which carries the RSSI-based (Re)Association
+ * Rejection attribute in the same element (Wi-Fi Optimized Connectivity 3.2,
+ * 3.14)
+ */
+static u8 * hostapd_eid_mbo_attrs(struct hostapd_data *hapd, u8 *eid,
+				  size_t len, int rssi_rej_delta)
 {
-	u8 mbo[4];
-
-	mbo[0] = OCE_ATTR_ID_RSSI_BASED_ASSOC_REJECT;
-	mbo[1] = 2;
-	/* Delta RSSI */
-	mbo[2] = delta;
-	/* Retry delay */
-	mbo[3] = hapd->iconf->rssi_reject_assoc_timeout;
-
-	return eid + mbo_add_ie(eid, len, mbo, 4);
-}
-
-
-u8 * hostapd_eid_mbo(struct hostapd_data *hapd, u8 *eid, size_t len)
-{
-	u8 mbo[20], *mbo_pos = mbo;
+	u8 mbo[24], *mbo_pos = mbo;
 	u8 *pos = eid;
 
-	if (!hapd->conf->mbo_enabled &&
+	if (!hapd->conf->mbo_enabled && !rssi_rej_delta &&
 	    !OCE_STA_CFON_ENABLED(hapd) && !OCE_AP_ENABLED(hapd))
 		return eid;
+
+	if (rssi_rej_delta) {
+		*mbo_pos++ = OCE_ATTR_ID_RSSI_BASED_ASSOC_REJECT;
+		*mbo_pos++ = 2;
+		/* Delta RSSI */
+		*mbo_pos++ = rssi_rej_delta;
+		/* Retry delay */
+		*mbo_pos++ = hapd->iconf->rssi_reject_assoc_timeout;
+	}
 
 	if (hapd->conf->mbo_enabled) {
 		*mbo_pos++ = MBO_ATTR_ID_AP_CAPA_IND;
@@ -857,6 +857,20 @@ u8 * hostapd_eid_mbo(struct hostapd_data *hapd, u8 *eid, size_t len)
 	pos += mbo_add_ie(pos, len, mbo, mbo_pos - mbo);
 
 	return pos;
+}
+
+
+u8 * hostapd_eid_mbo(struct hostapd_data *hapd, u8 *eid, size_t len)
+{
+	return hostapd_eid_mbo_attrs(hapd, eid, len, 0);
+}
+
+
+u8 * hostapd_eid_mbo_rssi_assoc_rej(struct hostapd_data *hapd, u8 *eid,
+				    size_t len, int delta)
+{
+	/* A delta of 0 would not be a rejection for the RSSI */
+	return hostapd_eid_mbo_attrs(hapd, eid, len, delta > 0 ? delta : 1);
 }
 
 
