@@ -234,6 +234,7 @@ void ap_copy_sta_supp_op_classes(struct sta_info *sta,
 				 size_t supp_op_classes_len);
 
 u8 * hostapd_eid_fils_indic(struct hostapd_data *hapd, u8 *eid, int hessid);
+u8 * hostapd_eid_esp(struct hostapd_data *hapd, u8 *eid);
 void ieee802_11_finish_fils_auth(struct hostapd_data *hapd,
 				 struct sta_info *sta, int success,
 				 struct wpabuf *erp_resp,

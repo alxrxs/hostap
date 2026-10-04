@@ -2229,9 +2229,20 @@ static void hostapd_single_channel_get_survey(struct hostapd_iface *iface,
 		iface->channel_utilization = dividend * 255 / divisor;
 		wpa_printf(MSG_DEBUG, "Channel Utilization: %d",
 			   iface->channel_utilization);
+
+		if ((survey->filled & SURVEY_HAS_CHAN_TIME_TX) &&
+		    survey->channel_time_tx >= iface->last_channel_time_tx &&
+		    survey->channel_time_tx - iface->last_channel_time_tx <=
+		    divisor)
+			iface->channel_utilization_tx =
+				(survey->channel_time_tx -
+				 iface->last_channel_time_tx) * 255 / divisor;
+		else
+			iface->channel_utilization_tx = 0;
 	}
 	iface->last_channel_time = survey->channel_time;
 	iface->last_channel_time_busy = survey->channel_time_busy;
+	iface->last_channel_time_tx = survey->channel_time_tx;
 }
 
 

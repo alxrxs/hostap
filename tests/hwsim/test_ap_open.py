@@ -251,6 +251,52 @@ def test_ap_bss_load(dev, apdev):
     if avg is None:
         raise Exception("No STATUS chan_util_avg seen")
 
+def test_ap_esp(dev, apdev):
+    """AP with the Estimated Service Parameters Inbound element"""
+    hapd = hostapd.add_ap(apdev[0],
+                          {"ssid": "open",
+                           "bss_load_update_period": "10",
+                           "esp": "1"})
+    bssid = hapd.own_addr()
+    dev[0].scan_for_bss(bssid, freq="2412")
+    bss = dev[0].get_bss(bssid)
+    ies = parse_ie(bss['ie'])
+    if 255 not in ies:
+        raise Exception("No element with the Extension ID seen")
+    esp = None
+    pos = bytes.fromhex(bss['ie'])
+    while len(pos) >= 3:
+        eid, elen = pos[0], pos[1]
+        if eid == 255 and elen >= 1 and pos[2] == 11:
+            esp = pos[3:2 + elen]
+        pos = pos[2 + elen:]
+    if esp is None:
+        raise Exception("No ESP element seen")
+    logger.info("ESP Information: " + esp.hex())
+    if len(esp) != 3:
+        raise Exception("Unexpected ESP Information length: %d" % len(esp))
+    if esp[0] & 0x03 != 1:
+        raise Exception("ESP Information is not for AC_BE")
+    if esp[0] >> 3 & 0x03 != 2 or esp[0] >> 5 != 7:
+        raise Exception("Unexpected data format or BA window size")
+    if esp[1] == 0:
+        raise Exception("No estimated air time")
+
+    dev[0].connect("open", key_mgmt="NONE", scan_freq="2412")
+    hwsim_utils.test_connectivity(dev[0], hapd)
+
+def test_ap_esp_disabled(dev, apdev):
+    """AP without the Estimated Service Parameters Inbound element"""
+    hapd = hostapd.add_ap(apdev[0],
+                          {"ssid": "open", "bss_load_update_period": "10"})
+    bssid = hapd.own_addr()
+    dev[0].scan_for_bss(bssid, freq="2412")
+    pos = bytes.fromhex(dev[0].get_bss(bssid)['ie'])
+    while len(pos) >= 3:
+        if pos[0] == 255 and pos[1] >= 1 and pos[2] == 11:
+            raise Exception("Unexpected ESP element")
+        pos = pos[2 + pos[1]:]
+
 def test_ap_bss_load_fail(dev, apdev):
     """BSS Load update failing to get survey data"""
     hapd = hostapd.add_ap(apdev[0],
