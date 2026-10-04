@@ -116,6 +116,17 @@ def test_tspec(dev, apdev):
     if "FAIL" not in dev[0].request("WMM_AC_ADDTS foo"):
         raise Exception("Invalid WMM_AC_ADDTS command accepted")
 
+def test_tspec_downlink_medium_time(dev, apdev):
+    """Downlink TS admitted with a Medium Time of zero"""
+    hapd = add_wmm_ap(apdev[0], ["VO", "VI"])
+    dev[0].connect("wmm_ac", key_mgmt="NONE", scan_freq="2462")
+    dev[0].add_ts(5, 6, direction="downlink")
+    status = dev[0].request("WMM_AC_STATUS")
+    if "Total admitted time = 0\n" not in status:
+        raise Exception("Downlink TS admitted with medium time: " + status)
+    dev[0].del_ts(5)
+
+
 def test_tspec_protocol(dev, apdev):
     """Protocol tests for addts/delts"""
     # configure ap with VO and VI requiring admission-control

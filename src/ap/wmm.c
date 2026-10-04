@@ -277,8 +277,12 @@ int wmm_process_tspec(struct wmm_tspec_element *tspec)
 		return WMM_ADDTS_STATUS_REFUSED;
 	}
 
-	/* Convert to 32 microseconds per second unit */
-	tspec->medium_time = host_to_le16(medium_time / 32);
+	/* Convert to 32 microseconds per second unit; a unidirectional
+	 * downlink TS gets a Medium Time of zero (WMM v1.2.0, 3.5.2) */
+	if (dir == 1)
+		tspec->medium_time = 0;
+	else
+		tspec->medium_time = host_to_le16(medium_time / 32);
 
 	return WMM_ADDTS_STATUS_ADMISSION_ACCEPTED;
 }
