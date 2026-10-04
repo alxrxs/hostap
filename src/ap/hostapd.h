@@ -705,7 +705,10 @@ struct hostapd_iface {
 	/* channel utilization calculation */
 	u64 last_channel_time;
 	u64 last_channel_time_busy;
+	u64 last_channel_time_tx;
 	u8 channel_utilization;
+	/* Share of the channel time the radio itself transmitted (0..255) */
+	u8 channel_utilization_tx;
 
 	unsigned int chan_util_samples_sum;
 	unsigned int chan_util_num_sample_periods;

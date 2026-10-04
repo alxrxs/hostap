@@ -301,6 +301,7 @@ struct hostapd_bss_config {
 	int dtim_period;
 	unsigned int bss_load_update_period;
 	unsigned int chan_util_avg_period;
+	bool esp; /* Estimated Service Parameters Inbound element */
 
 	int ieee802_1x; /* use IEEE 802.1X */
 	int eapol_version;

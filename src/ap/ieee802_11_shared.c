@@ -980,6 +980,46 @@ void ap_copy_sta_supp_op_classes(struct sta_info *sta,
 }
 
 
+u8 * hostapd_eid_esp(struct hostapd_data *hapd, u8 *eid)
+{
+	struct hostapd_iface *iface = hapd->iface;
+	unsigned int other, avail, fraction;
+	u8 ac_info;
+	bool ht;
+
+	if (!hapd->conf->esp || !hapd->conf->bss_load_update_period)
+		return eid;
+
+	ht = hapd->iconf->ieee80211n && !hapd->conf->disable_11n;
+
+	/* Air time a new STA would get: the channel time other BSSs do not
+	 * use, shared equally with the associated STAs (Wi-Fi Optimized
+	 * Connectivity 3.15) */
+	other = iface->channel_utilization > iface->channel_utilization_tx ?
+		iface->channel_utilization - iface->channel_utilization_tx : 0;
+	avail = 255 - other;
+	fraction = avail / (hapd->num_sta + 1);
+	if (!fraction)
+		fraction = 1;
+
+	ac_info = 1; /* AC_BE */
+	if (ht) {
+		ac_info |= 2 << 3; /* Data Format: A-MPDU */
+		ac_info |= 7 << 5; /* BA Window Size: 64 */
+	}
+
+	*eid++ = WLAN_EID_EXTENSION;
+	*eid++ = 4;
+	*eid++ = WLAN_EID_EXT_ESTIMATED_SERVICE_PARAMS;
+	*eid++ = ac_info;
+	*eid++ = fraction;
+	/* Data PPDU Duration Target in units of 50 us: 4 ms with A-MPDU */
+	*eid++ = ht ? 80 : 20;
+
+	return eid;
+}
+
+
 u8 * hostapd_eid_fils_indic(struct hostapd_data *hapd, u8 *eid, int hessid)
 {
 	u8 *pos = eid;

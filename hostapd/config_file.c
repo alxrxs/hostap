@@ -3457,6 +3457,8 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 			return 1;
 		}
 		bss->bss_load_update_period = val;
+	} else if (os_strcmp(buf, "esp") == 0) {
+		bss->esp = atoi(pos);
 	} else if (os_strcmp(buf, "chan_util_avg_period") == 0) {
 		int val = atoi(pos);
 

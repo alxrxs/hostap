@@ -842,6 +842,7 @@ static size_t hostapd_probe_resp_elems_len(struct hostapd_data *hapd,
 					 params->known_bss,
 					 params->known_bss_len, NULL);
 	buflen += hostapd_eid_rnr_len(hapd, WLAN_FC_STYPE_PROBE_RESP, true);
+	buflen += 6; /* Estimated Service Parameters Inbound element */
 
 #ifdef CONFIG_IEEE80211BN
 	if (hostapd_is_uhr_enabled(hapd)) {
@@ -965,6 +966,7 @@ static u8 * hostapd_probe_resp_fill_elems(struct hostapd_data *hapd,
 	pos = hostapd_eid_chsw_wrapper(hapd, pos);
 
 	pos = hostapd_eid_rnr(hapd, pos, WLAN_FC_STYPE_PROBE_RESP, true);
+	pos = hostapd_eid_esp(hapd, pos);
 	pos = hostapd_eid_fils_indic(hapd, pos, 0);
 
 	/* Max Channel Switch Time element */
@@ -2353,6 +2355,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	    hapd == hostapd_mbssid_get_tx_bss(hapd))
 		tail_len += 5; /* Multiple BSSID Configuration element */
 	tail_len += hostapd_eid_rnr_len(hapd, WLAN_FC_STYPE_BEACON, true);
+	tail_len += 6; /* Estimated Service Parameters Inbound element */
 
 #ifdef CONFIG_IEEE80211BN
 	if (hostapd_is_uhr_enabled(hapd))
@@ -2500,6 +2503,7 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 	tailpos = hostapd_eid_chsw_wrapper(hapd, tailpos);
 
 	tailpos = hostapd_eid_rnr(hapd, tailpos, WLAN_FC_STYPE_BEACON, true);
+	tailpos = hostapd_eid_esp(hapd, tailpos);
 	tailpos = hostapd_eid_fils_indic(hapd, tailpos, 0);
 
 	/* Max Channel Switch Time element */
