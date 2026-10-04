@@ -13,6 +13,8 @@ logger = logging.getLogger()
 import os
 import select
 import signal
+import socket
+import ssl
 import struct
 import subprocess
 import threading
@@ -1882,6 +1884,189 @@ def test_radius_tls_freeradius(dev, apdev, test_params):
             pid = int(f.read())
             if pid > 0:
                 os.kill(pid, signal.SIGTERM)
+
+class RadSecServer(threading.Thread):
+    """RADIUS/TLS accounting server that controls how its responses are
+    split into TLS records and TCP segments"""
+    def __init__(self, port, mode):
+        threading.Thread.__init__(self)
+        self.mode = mode
+        self.requests = []
+        self.error = None
+        self.stop_event = threading.Event()
+        self.ready = threading.Event()
+        self.release = threading.Event()
+        self.lsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        self.lsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.lsock.bind(("127.0.0.1", port))
+        self.lsock.listen(1)
+        self.lsock.settimeout(10)
+        self.daemon = True
+
+    def flush(self):
+        data = self.outgoing.read()
+        if data:
+            self.sock.sendall(data)
+
+    def recv(self):
+        data = self.sock.recv(4096)
+        if not data:
+            raise Exception("Connection closed by hostapd")
+        self.incoming.write(data)
+
+    def response(self, req):
+        resp = struct.pack('>BBH', 5, req[1], 20)
+        auth = hashlib.md5(resp + req[4:20] + b"radsec").digest()
+        return resp + auth
+
+    def run(self):
+        try:
+            self._run()
+        except Exception as e:
+            if not self.stop_event.is_set():
+                self.error = str(e)
+
+    def _run(self):
+        ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+        ctx.load_cert_chain("auth_serv/server.pem", "auth_serv/server.key")
+        ctx.load_verify_locations("auth_serv/ca.pem")
+        ctx.verify_mode = ssl.CERT_REQUIRED
+        self.sock, addr = self.lsock.accept()
+        self.sock.settimeout(1)
+        self.incoming = ssl.MemoryBIO()
+        self.outgoing = ssl.MemoryBIO()
+        tls = ctx.wrap_bio(self.incoming, self.outgoing, server_side=True)
+        while True:
+            try:
+                tls.do_handshake()
+                break
+            except ssl.SSLWantReadError:
+                self.flush()
+                self.recv()
+        self.flush()
+        self.ready.set()
+
+        # The first two responses go out as the mode says, the rest each in
+        # its own record and segment.
+        stream = b''
+        pending = []
+        first = True
+        while not self.stop_event.is_set():
+            try:
+                self.recv()
+            except socket.timeout:
+                pass
+            while True:
+                try:
+                    stream += tls.read(4096)
+                except ssl.SSLWantReadError:
+                    break
+            self.flush()
+            while len(stream) >= 4:
+                length = struct.unpack('>H', stream[2:4])[0]
+                if len(stream) < length:
+                    break
+                req = stream[0:length]
+                stream = stream[length:]
+                self.requests.append(req)
+                pending.append(self.response(req))
+            if not pending or (first and len(pending) < 2):
+                continue
+            if first and self.mode == "message":
+                tls.write(b''.join(pending))
+            else:
+                for resp in pending:
+                    tls.write(resp)
+            data = self.outgoing.read()
+            if first and self.mode == "split":
+                # Stop inside the second record, send the rest once hostapd
+                # sent another request
+                cut = len(data) * 3 // 4
+                self.sock.sendall(data[0:cut])
+                self.release.wait(5)
+                data = data[cut:]
+            self.sock.sendall(data)
+            pending = []
+            first = False
+
+    def stop(self):
+        self.stop_event.set()
+        self.lsock.close()
+        try:
+            self.sock.close()
+        except AttributeError:
+            pass
+
+def radsec_acct_ap(apdev, port):
+    params = hostapd.wpa2_params(ssid="radsec-acct", passphrase="12345678")
+    params['acct_server_addr'] = "127.0.0.1"
+    params['acct_server_port'] = str(port)
+    params['acct_server_type'] = "TLS"
+    params['acct_server_shared_secret'] = "radsec"
+    params['acct_server_ca_cert'] = "auth_serv/ca.pem"
+    params['acct_server_client_cert'] = "auth_serv/user.pem"
+    params['acct_server_private_key'] = "auth_serv/user.key"
+    return hostapd.add_ap(apdev, params)
+
+def radsec_acct_responses(hapd, requests):
+    for i in range(20):
+        mib = hapd.get_mib()
+        if int(mib['radiusAccClientResponses']) >= requests:
+            break
+        time.sleep(0.1)
+    if int(mib['radiusAccClientRequests']) != requests or \
+       int(mib['radiusAccClientResponses']) != requests:
+        raise Exception("Unexpected accounting counters: requests=%s responses=%s" %
+                        (mib['radiusAccClientRequests'],
+                         mib['radiusAccClientResponses']))
+    if int(mib['radiusAccClientRetransmissions']) != 0:
+        raise Exception("Accounting requests retransmitted: %s" %
+                        mib['radiusAccClientRetransmissions'])
+
+def run_radsec_acct_stream(dev, apdev, mode):
+    port = 18083
+    srv = RadSecServer(port, mode)
+    srv.start()
+    try:
+        hapd = radsec_acct_ap(apdev[0], port)
+        if not srv.ready.wait(5):
+            raise Exception("No RADIUS/TLS connection")
+        dev[0].connect("radsec-acct", psk="12345678", scan_freq="2412",
+                       wait_connect=False)
+        dev[1].connect("radsec-acct", psk="12345678", scan_freq="2412",
+                       wait_connect=False)
+        dev[0].wait_connected()
+        dev[1].wait_connected()
+        if mode == "split":
+            # hostapd encrypts a new request while half a record is pending
+            time.sleep(0.5)
+            dev[1].request("DISCONNECT")
+            dev[1].wait_disconnected()
+            time.sleep(0.2)
+            srv.release.set()
+        else:
+            # Accounting-On and the two Accounting-Starts
+            radsec_acct_responses(hapd, 3)
+            # The connection is still usable after the coalesced responses
+            dev[0].request("DISCONNECT")
+            dev[0].wait_disconnected()
+        radsec_acct_responses(hapd, 4)
+        if srv.error:
+            raise Exception("RADIUS/TLS server: " + srv.error)
+    finally:
+        srv.stop()
+
+def test_radius_tls_acct_records(dev, apdev):
+    """RADIUS/TLS accounting responses in separate records of one segment"""
+    run_radsec_acct_stream(dev, apdev, "records")
+
+def test_radius_tls_acct_message(dev, apdev):
+    """RADIUS/TLS accounting responses in a single TLS record"""
+    run_radsec_acct_stream(dev, apdev, "message")
+
+def test_radius_tls_acct_split(dev, apdev):
+    """RADIUS/TLS accounting response record split around a request"""
+    run_radsec_acct_stream(dev, apdev, "split")
 
 def test_radius_eapol_test(dev, apdev, test_params):
     """RADIUS testing with eapol_test"""
