@@ -6809,10 +6809,12 @@ void ieee80211_ml_build_assoc_resp(struct hostapd_data *hapd,
 	p = hostapd_eid_ht_capabilities(hapd, p);
 	p = hostapd_eid_ht_operation(hapd, p);
 
+#ifdef CONFIG_IEEE80211AC
 	if (hostapd_is_vht_enabled(hapd)) {
 		p = hostapd_eid_vht_capabilities(hapd, p, 0);
 		p = hostapd_eid_vht_operation(hapd, p);
 	}
+#endif /* CONFIG_IEEE80211AC */
 
 	if (hostapd_is_he_enabled(hapd)) {
 		p = hostapd_eid_he_capab(hapd, p, IEEE80211_MODE_AP);
