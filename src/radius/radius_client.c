@@ -396,6 +396,8 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 	u8 *acct_delay_time;
 	size_t acct_delay_time_len;
 	int num_servers;
+	struct hostapd_radius_server *server;
+	bool tls_wait = false;
 #ifdef CONFIG_RADIUS_TLS
 	struct wpabuf *out = NULL;
 	struct tls_connection *conn = NULL;
@@ -419,12 +421,7 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 				return 0;
 		}
 		s = radius->acct_sock;
-		if (entry->attempts == 0)
-			conf->acct_server->requests++;
-		else {
-			conf->acct_server->timeouts++;
-			conf->acct_server->retransmissions++;
-		}
+		server = conf->acct_server;
 	} else {
 #ifdef CONFIG_RADIUS_TLS
 		if (radius->auth_tls)
@@ -440,11 +437,20 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 				return 0;
 		}
 		s = radius->auth_sock;
-		if (entry->attempts == 0)
-			conf->auth_server->requests++;
-		else {
-			conf->auth_server->timeouts++;
-			conf->auth_server->retransmissions++;
+		server = conf->auth_server;
+	}
+
+#ifdef CONFIG_RADIUS_TLS
+	tls_wait = (acct && radius->acct_tls && !radius->acct_tls_ready) ||
+		(!acct && radius->auth_tls && !radius->auth_tls_ready);
+#endif /* CONFIG_RADIUS_TLS */
+	/* A message waiting for the TLS handshake has not been sent yet */
+	if (!tls_wait) {
+		if (entry->attempts == 0) {
+			server->requests++;
+		} else {
+			server->timeouts++;
+			server->retransmissions++;
 		}
 	}
 
@@ -466,8 +472,7 @@ static int radius_client_retransmit(struct radius_client_data *radius,
 	}
 
 #ifdef CONFIG_RADIUS_TLS
-	if ((acct && radius->acct_tls && !radius->acct_tls_ready) ||
-	    (!acct && radius->auth_tls && !radius->auth_tls_ready)) {
+	if (tls_wait) {
 		wpa_printf(MSG_DEBUG,
 			   "RADIUS: TLS connection not yet ready for TX");
 		goto not_ready;
@@ -805,7 +810,8 @@ static void radius_client_list_add(struct radius_client_data *radius,
 				   struct radius_msg *msg,
 				   RadiusType msg_type,
 				   const u8 *shared_secret,
-				   size_t shared_secret_len, const u8 *addr)
+				   size_t shared_secret_len, const u8 *addr,
+				   int attempts)
 {
 	struct radius_msg_list *entry, *prev;
 
@@ -832,8 +838,8 @@ static void radius_client_list_add(struct radius_client_data *radius,
 	os_get_reltime(&entry->last_attempt);
 	entry->first_try = entry->last_attempt.sec;
 	entry->next_try = entry->first_try + RADIUS_CLIENT_FIRST_WAIT;
-	entry->attempts = 1;
-	entry->accu_attempts = 1;
+	entry->attempts = attempts;
+	entry->accu_attempts = attempts;
 	entry->next_wait = RADIUS_CLIENT_FIRST_WAIT * 2;
 	if (entry->next_wait > RADIUS_CLIENT_MAX_WAIT)
 		entry->next_wait = RADIUS_CLIENT_MAX_WAIT;
@@ -942,6 +948,8 @@ int radius_client_send(struct radius_client_data *radius,
 	char *name;
 	int s, res;
 	struct wpabuf *buf;
+	struct hostapd_radius_server *server;
+	int attempts = 0;
 #ifdef CONFIG_RADIUS_TLS
 	struct wpabuf *out = NULL;
 	struct tls_connection *conn = NULL;
@@ -977,7 +985,7 @@ int radius_client_send(struct radius_client_data *radius,
 		}
 		name = "accounting";
 		s = radius->acct_sock;
-		conf->acct_server->requests++;
+		server = conf->acct_server;
 	} else {
 #ifdef CONFIG_RADIUS_TLS
 		if (radius->auth_tls)
@@ -1006,7 +1014,7 @@ int radius_client_send(struct radius_client_data *radius,
 		}
 		name = "authentication";
 		s = radius->auth_sock;
-		conf->auth_server->requests++;
+		server = conf->auth_server;
 	}
 
 	hostapd_logger(radius->ctx, NULL, HOSTAPD_MODULE_RADIUS,
@@ -1024,6 +1032,8 @@ int radius_client_send(struct radius_client_data *radius,
 	}
 #endif /* CONFIG_RADIUS_TLS */
 
+	server->requests++;
+	attempts = 1;
 	buf = radius_msg_get_buf(msg);
 #ifdef CONFIG_RADIUS_TLS
 	if (conn) {
@@ -1052,7 +1062,7 @@ int radius_client_send(struct radius_client_data *radius,
 skip_send:
 #endif /* CONFIG_RADIUS_TLS */
 	radius_client_list_add(radius, msg, msg_type, shared_secret,
-			       shared_secret_len, addr);
+			       shared_secret_len, addr, attempts);
 
 	return 0;
 }
