@@ -51,7 +51,8 @@ def mbssid_write_bss_params(f, ifname, idx, params=None, single_ssid=False):
     # Add BSS specific characteristics
     fields = ["wpa", "wpa_pairwise", "rsn_pairwise", "wpa_passphrase",
               "wpa_key_mgmt", "ieee80211w", "sae_pwe", "beacon_prot",
-              "sae_password"]
+              "sae_password", "mobility_domain", "nas_identifier",
+              "ft_psk_generate_local"]
 
     if idx == 0:
         f.write("interface=%s\n" % ifname)
@@ -475,3 +476,69 @@ def run_mbssid_beacon_prot(dev, apdev, params, non_tx_first):
     finally:
         subprocess.call(['ip', 'link', 'set', 'dev', apdev[0]['ifname'],
                          'address', apdev[0]['bssid']])
+
+def mbssid_nontx_mde(dev, bssid):
+    bss = dev.get_bss(bssid)
+    if bss is None:
+        raise Exception("Nontransmitted BSS not found")
+    ie = parse_ie(bss['ie'])
+    return ie.get(54)
+
+def run_he_ap_mbssid_ft(dev, apdev, params, nontx_ft):
+    check_sae_capab(dev[0])
+    f, fname, ifname = mbssid_create_cfg_file(apdev, params)
+
+    tx_params = {"wpa": "2", "wpa_passphrase": "12345678",
+                 "wpa_pairwise": "CCMP", "wpa_key_mgmt": "FT-PSK",
+                 "mobility_domain": "a1b2", "nas_identifier": "nas0.w1.fi",
+                 "ft_psk_generate_local": "1"}
+    nontx_params = {"wpa": "2", "wpa_passphrase": "12345678",
+                    "wpa_pairwise": "CCMP", "sae_pwe": "1",
+                    "ieee80211w": "2"}
+    if nontx_ft:
+        nontx_params.update({"wpa_key_mgmt": "FT-SAE",
+                             "mobility_domain": "c3d4",
+                             "nas_identifier": "nas1.w1.fi"})
+    else:
+        nontx_params["wpa_key_mgmt"] = "SAE"
+
+    mbssid_write_bss_params(f, ifname, 0, tx_params)
+    mbssid_write_bss_params(f, ifname, 1, nontx_params)
+    f.close()
+
+    hapd = None
+    try:
+        dev[0].set("sae_pwe", "1")
+        hapd, pid = mbssid_start_ap(dev, apdev, params, fname, ifname, None,
+                                    only_start_ap=True)
+        nontx = "00:03:7f:12:2a:01"
+        dev[0].scan_for_bss(nontx, freq="2412", force_scan=True)
+        mde = mbssid_nontx_mde(dev[0], nontx)
+        if nontx_ft:
+            if mde is None or mde[0:2] != b'\xc3\xd4':
+                raise Exception("Nontransmitted BSS MDE not its own: " +
+                                (mde.hex() if mde else "none"))
+            dev[0].connect("bss-1", key_mgmt="FT-SAE", sae_password="12345678",
+                           ieee80211w="2", scan_freq="2412")
+        else:
+            if mde is not None:
+                raise Exception("MDE inherited by the nontransmitted BSS")
+            dev[0].connect("bss-1", key_mgmt="SAE", sae_password="12345678",
+                           ieee80211w="2", scan_freq="2412")
+        dev[0].request("DISCONNECT")
+        dev[0].wait_disconnected()
+    finally:
+        if hapd:
+            mbssid_stop_ap(hapd, pid)
+        dev[0].set("sae_pwe", "0")
+        subprocess.call(['ip', 'link', 'set', 'dev', apdev[0]['ifname'],
+                         'address', apdev[0]['bssid']])
+
+def test_he_ap_mbssid_ft_own_mde(dev, apdev, params):
+    """HE AP MBSSID with FT in two mobility domains"""
+    run_he_ap_mbssid_ft(dev, apdev, params, True)
+
+def test_he_ap_mbssid_ft_no_mde(dev, apdev, params):
+    """HE AP MBSSID with FT on the transmitted BSS only"""
+    run_he_ap_mbssid_ft(dev, apdev, params, False)
+
