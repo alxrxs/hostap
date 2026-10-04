@@ -11,8 +11,10 @@
 
 #include "utils/common.h"
 #include "utils/crc32.h"
+#include "common/ieee802_11_common.h"
 #include "hostapd.h"
 #include "ieee802_11.h"
+#include "sta_info.h"
 #include "neighbor_db.h"
 
 
@@ -373,4 +375,143 @@ int hostapd_neighbor_sync_own_report(struct hostapd_data *hapd)
 	hostapd_neighbor_set_own_report(hapd);
 
 	return 0;
+}
+
+
+/*
+ * Preference for a candidate before normalization: 0 excludes it, -1 skips it.
+ * The STA's operating classes and, with MBO, its non-preferred channel
+ * reports (Wi-Fi Agile Multiband 3.2) decide.
+ */
+static int neighbor_cand_pref(struct hostapd_data *hapd, struct sta_info *sta,
+			      const u8 *nr)
+{
+	u8 op_class = nr[10];
+#ifdef CONFIG_MBO
+	u8 chan = nr[11];
+	struct mbo_non_pref_chan_info *info;
+#endif /* CONFIG_MBO */
+
+	/* Neighbor Report elements in the list use global operating classes */
+	if (!get_oper_class(NULL, op_class))
+		return -1;
+
+	if (sta && sta->supp_op_classes) {
+		const u8 *pos = &sta->supp_op_classes[1];
+		const u8 *end = pos + sta->supp_op_classes[0];
+
+		/* Current Operating Class and the Operating Classes list, up
+		 * to the first delimiter */
+		while (pos < end && *pos != 130 && *pos != 0 &&
+		       *pos != op_class)
+			pos++;
+		if (pos == end || *pos != op_class)
+			return -1;
+	}
+
+#ifdef CONFIG_MBO
+	for (info = sta ? sta->non_pref_chan : NULL; info; info = info->next) {
+		unsigned int i;
+
+		if (info->op_class != op_class)
+			continue;
+		for (i = 0; i < info->num_channels; i++) {
+			if (info->channels[i] == chan)
+				return info->pref == 0 ? 0 : 254;
+		}
+	}
+#endif /* CONFIG_MBO */
+
+	return 255;
+}
+
+
+/*
+ * Candidate BSSs for a STA to transition to, as Neighbor Report elements: for
+ * a BSS Transition Management Request that answers a query (IEEE Std
+ * 802.11-2024, 11.21.7.3; Wi-Fi Agile Multiband 3.5.1.2) or for the Neighbor
+ * Report ANQP-element (Wi-Fi Agile Multiband 3.5.1.1, 4.3.3), sta then being
+ * NULL. Every BSS of this ESS in the neighbor report database, the own BSS
+ * included, gets an element with a BSS Transition Candidate Preference
+ * subelement. A preference configured in the database is used, else one from
+ * neighbor_cand_pref(); the values are then renumbered so that the most
+ * preferred is 255 and each lower level is one less, 0 staying 0. Without the
+ * own BSS in the database (rrm_neighbor_report=0), there is no list.
+ */
+size_t hostapd_neighbor_candidates(struct hostapd_data *hapd,
+				   struct sta_info *sta, u8 *pos,
+				   size_t max_len)
+{
+	struct hostapd_neighbor_entry *nr;
+	u8 used[256 / 8];
+	bool own = false;
+	u8 *start = pos;
+	int pass;
+
+	os_memset(used, 0, sizeof(used));
+	for (pass = 0; pass < 2; pass++) {
+		dl_list_for_each(nr, &hapd->nr_db,
+				 struct hostapd_neighbor_entry, list) {
+			const u8 *nr_pos, *sub;
+			size_t len;
+			int pref, v, higher;
+
+			if (!nr->nr || wpabuf_len(nr->nr) < 13 ||
+			    nr->ssid.ssid_len != hapd->conf->ssid.ssid_len ||
+			    os_memcmp(nr->ssid.ssid, hapd->conf->ssid.ssid,
+				      nr->ssid.ssid_len) != 0)
+				continue;
+
+			nr_pos = wpabuf_head_u8(nr->nr);
+			len = wpabuf_len(nr->nr);
+			pref = neighbor_cand_pref(hapd, sta, nr_pos);
+			if (pref < 0)
+				continue;
+			sub = get_ie(nr_pos + 13, len - 13,
+				     WNM_NEIGHBOR_BSS_TRANSITION_CANDIDATE);
+			if (sub && sub[1] >= 1)
+				pref = sub[2];
+
+			if (pass == 0) {
+				used[pref / 8] |= BIT(pref % 8);
+				if (ether_addr_equal(nr->bssid,
+						     hapd->own_addr))
+					own = true;
+				continue;
+			}
+
+			/* Renumber: one level below 255 per higher value */
+			higher = 0;
+			for (v = pref + 1; pref && v < 256; v++)
+				if (used[v / 8] & BIT(v % 8))
+					higher++;
+			if (pref)
+				pref = 255 - higher;
+
+			if (!sub)
+				len += 3;
+			if (len > 255 ||
+			    (size_t) (pos - start) + 2 + len > max_len)
+				continue;
+
+			*pos++ = WLAN_EID_NEIGHBOR_REPORT;
+			*pos++ = len;
+			os_memcpy(pos, nr_pos, wpabuf_len(nr->nr));
+			if (sub)
+				pos[sub - nr_pos + 2] = pref;
+			pos += wpabuf_len(nr->nr);
+			if (!sub) {
+				*pos++ = WNM_NEIGHBOR_BSS_TRANSITION_CANDIDATE;
+				*pos++ = 1;
+				*pos++ = pref;
+			}
+		}
+
+		/* The list has to include the own BSS (Wi-Fi Agile Multiband
+		 * 3.5.1.2); the database has it when rrm_neighbor_report=1 */
+		if (pass == 0 && !own)
+			return 0;
+	}
+
+	return pos - start;
 }

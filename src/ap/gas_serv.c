@@ -19,6 +19,7 @@
 #include "dpp_hostapd.h"
 #include "sta_info.h"
 #include "gas_serv.h"
+#include "neighbor_db.h"
 
 
 static void gas_serv_peer_timeout(void *eloop_ctx, void *timeout_ctx);
@@ -288,6 +289,17 @@ static int anqp_add_override(struct hostapd_data *hapd, struct wpabuf **buf,
 }
 
 
+/* The Neighbor Report ANQP-element from the neighbor report database, unless
+ * configured with anqp_elem */
+static bool anqp_local_neighbor_report(struct hostapd_data *hapd)
+{
+	return !get_anqp_elem(hapd, ANQP_NEIGHBOR_REPORT) &&
+		(hapd->conf->radio_measurements[0] &
+		 WLAN_RRM_CAPS_NEIGHBOR_REPORT) &&
+		!dl_list_empty(&hapd->nr_db);
+}
+
+
 static void anqp_add_capab_list(struct hostapd_data *hapd,
 				struct wpabuf **_buf)
 {
@@ -334,7 +346,8 @@ static void anqp_add_capab_list(struct hostapd_data *hapd,
 		wpabuf_put_le16(buf, ANQP_TDLS_CAPABILITY);
 	if (get_anqp_elem(hapd, ANQP_EMERGENCY_NAI))
 		wpabuf_put_le16(buf, ANQP_EMERGENCY_NAI);
-	if (get_anqp_elem(hapd, ANQP_NEIGHBOR_REPORT))
+	if (get_anqp_elem(hapd, ANQP_NEIGHBOR_REPORT) ||
+	    anqp_local_neighbor_report(hapd))
 		wpabuf_put_le16(buf, ANQP_NEIGHBOR_REPORT);
 #ifdef CONFIG_FILS
 	if (!dl_list_empty(&hapd->conf->fils_realms) ||
@@ -398,6 +411,26 @@ static void anqp_add_venue_name(struct hostapd_data *hapd, struct wpabuf **buf)
 		}
 		gas_anqp_set_element_len(*buf, len);
 	}
+}
+
+
+static void anqp_add_neighbor_report(struct hostapd_data *hapd,
+				     struct wpabuf **buf)
+{
+	u8 nr[1400];
+	size_t nr_len;
+	u8 *len;
+
+	/* The candidates with preferences, the own BSS included (Wi-Fi Agile
+	 * Multiband 3.5.1.1, 4.3.3); no STA is associated yet */
+	nr_len = hostapd_neighbor_candidates(hapd, NULL, nr, sizeof(nr));
+	if (!nr_len)
+		return;
+	if (wpabuf_resize(buf, 4 + nr_len) < 0)
+		return;
+	len = gas_anqp_add_element(*buf, ANQP_NEIGHBOR_REPORT);
+	wpabuf_put_data(*buf, nr, nr_len);
+	gas_anqp_set_element_len(*buf, len);
 }
 
 
@@ -1114,6 +1147,16 @@ gas_serv_build_gas_resp_payload(struct hostapd_data *hapd,
 			continue;
 		}
 #endif /* CONFIG_FILS */
+		if (extra_req[i] == ANQP_NEIGHBOR_REPORT &&
+		    anqp_local_neighbor_report(hapd)) {
+			anqp_add_neighbor_report(hapd, &buf);
+			if (wpabuf_len(buf) > max_len) {
+				wpa_printf(MSG_INFO,
+					   "ANQP: ANQP-element would go beyond maximum GAS response length - skip");
+				buf->used = prev_len;
+			}
+			continue;
+		}
 		if (extra_req[i] == ANQP_VENUE_URL) {
 			anqp_add_venue_url(hapd, &buf);
 			if (wpabuf_len(buf) > max_len) {
@@ -1307,6 +1350,10 @@ static void rx_anqp_query_list_id(struct hostapd_data *hapd, u16 info_id,
 		if (info_id == ANQP_VENUE_URL && hapd->conf->venue_url) {
 			wpa_printf(MSG_DEBUG,
 				   "ANQP: Venue URL (local)");
+		} else if (info_id == ANQP_NEIGHBOR_REPORT &&
+			   anqp_local_neighbor_report(hapd)) {
+			wpa_printf(MSG_DEBUG,
+				   "ANQP: Neighbor Report (local)");
 		} else if (!get_anqp_elem(hapd, info_id)) {
 			wpa_printf(MSG_DEBUG, "ANQP: Unsupported Info Id %u",
 				   info_id);

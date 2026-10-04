@@ -24,5 +24,8 @@ int hostapd_neighbor_sync_own_report(struct hostapd_data *hapd);
 int hostapd_neighbor_remove(struct hostapd_data *hapd, const u8 *bssid,
 			    const struct wpa_ssid_value *ssid);
 void hostapd_free_neighbor_db(struct hostapd_data *hapd);
+size_t hostapd_neighbor_candidates(struct hostapd_data *hapd,
+				   struct sta_info *sta, u8 *pos,
+				   size_t max_len);
 
 #endif /* NEIGHBOR_DB_H */
