@@ -1793,17 +1793,19 @@ int hostapd_ctrl_iface_bss_tm_req(struct hostapd_data *hapd,
 #ifdef CONFIG_MBO
 	pos = os_strstr(cmd, "mbo=");
 	if (pos) {
-		unsigned int mbo_reason, cell_pref, reassoc_delay;
+		unsigned int mbo_reason, cell_pref = 0, reassoc_delay;
+		bool cell_pref_set;
 		u8 *mbo_pos = mbo;
 
 		ret = sscanf(pos, "mbo=%u:%u:%u", &mbo_reason,
 			     &reassoc_delay, &cell_pref);
-		if (ret != 3) {
+		if (ret != 2 && ret != 3) {
 			wpa_printf(MSG_DEBUG,
-				   "MBO requires three arguments: mbo=<reason>:<reassoc_delay>:<cell_pref>");
+				   "MBO requires two or three arguments: mbo=<reason>:<reassoc_delay>[:<cell_pref>]");
 			ret = -1;
 			goto fail;
 		}
+		cell_pref_set = ret == 3;
 
 		if (mbo_reason > MBO_TRANSITION_REASON_PREMIUM_AP) {
 			wpa_printf(MSG_DEBUG,
@@ -1834,9 +1836,13 @@ int hostapd_ctrl_iface_bss_tm_req(struct hostapd_data *hapd,
 		*mbo_pos++ = MBO_ATTR_ID_TRANSITION_REASON;
 		*mbo_pos++ = 1;
 		*mbo_pos++ = mbo_reason;
-		*mbo_pos++ = MBO_ATTR_ID_CELL_DATA_PREF;
-		*mbo_pos++ = 1;
-		*mbo_pos++ = cell_pref;
+		/* Only for a STA that indicated a cellular data connection
+		 * (Wi-Fi Agile Multiband 3.5.2) */
+		if (cell_pref_set && sta->cell_capa == MBO_CELL_CAPA_AVAILABLE) {
+			*mbo_pos++ = MBO_ATTR_ID_CELL_DATA_PREF;
+			*mbo_pos++ = 1;
+			*mbo_pos++ = cell_pref;
+		}
 
 		if (reassoc_delay) {
 			*mbo_pos++ = MBO_ATTR_ID_ASSOC_RETRY_DELAY;
