@@ -12,9 +12,12 @@ from wpasupplicant import WpaSupplicant
 
 from hwsim_utils import set_rx_rssi, reset_rx_rssi
 import time
+import binascii
+import struct
 import os
 from datetime import datetime
 from utils import HwsimSkip
+from tshark import run_tshark
 
 def check_set_tx_power(dev, apdev):
     hapd = hostapd.add_ap(apdev[0], {'ssid': 'check_tx_power'})
@@ -183,3 +186,89 @@ def test_oce_ap_open_connect_cmd(dev, apdev):
     wpas = WpaSupplicant(global_iface='/tmp/wpas-wlan5')
     wpas.interface_add("wlan5", drv_params="force_connect_cmd=1")
     wpas.connect(ssid, key_mgmt="NONE", scan_freq="2412")
+
+def oce_probe_resp_da(dev, hapd, params, elems):
+    """Scan with elements added to the Probe Request frames and return the
+    destination addresses of the Probe Response frames from hapd"""
+    dev.request("VENDOR_ELEM_ADD 14 " + elems)
+    try:
+        dev.scan(freq="2412", only_new=True)
+    finally:
+        dev.request("VENDOR_ELEM_REMOVE 14 *")
+    time.sleep(0.1)
+    out = run_tshark(os.path.join(params['logdir'], "hwsim0.pcapng"),
+                     "wlan.fc.type_subtype == 5 && wlan.sa == " +
+                     hapd.own_addr(), display=["wlan.da"])
+    return out.splitlines()
+
+def oce_ap_params(ssid):
+    return {"ssid": ssid, "mbo": "1", "oce": "4", "beacon_int": "100"}
+
+def test_oce_ap_capab(dev, apdev):
+    """OCE AP advertises the OCE Capability Indication attribute"""
+    hapd = hostapd.add_ap(apdev[0], oce_ap_params("test-oce"))
+    dev[0].scan_for_bss(hapd.own_addr(), freq="2412")
+    ie = bytes.fromhex(dev[0].get_bss(hapd.own_addr())['ie'])
+    found = False
+    while len(ie) >= 2:
+        eid, elen, data = ie[0], ie[1], ie[2:2 + ie[1]]
+        ie = ie[2 + elen:]
+        if eid == 221 and data[0:4] == b'\x50\x6f\x9a\x16':
+            attrs = data[4:]
+            while len(attrs) >= 2:
+                if attrs[0] == 101 and attrs[1] == 1:
+                    if attrs[2] & 0x07 != 1:
+                        raise Exception("Unexpected OCE release")
+                    found = True
+                attrs = attrs[2 + attrs[1]:]
+    if not found:
+        raise Exception("No OCE Capability Indication attribute")
+
+def test_oce_ap_probe_suppress_ssid(dev, apdev, params):
+    """OCE AP and Probe Suppression SSIDs attribute"""
+    ssid = "test-oce"
+    hapd = hostapd.add_ap(apdev[0], oce_ap_params(ssid))
+    short_ssid = struct.pack('<I', binascii.crc32(ssid.encode()) & 0xffffffff)
+    da = oce_probe_resp_da(dev[0], hapd, params,
+                           "dd0a506f9a16" + "6a04" + short_ssid.hex())
+    if dev[0].own_addr() in da:
+        raise Exception("Probe Response frame sent despite suppression")
+    other = struct.pack('<I', binascii.crc32(b"other") & 0xffffffff)
+    da = oce_probe_resp_da(dev[0], hapd, params,
+                           "dd0a506f9a16" + "6a04" + other.hex())
+    if dev[0].own_addr() not in da:
+        raise Exception("No Probe Response frame for another short SSID")
+
+def test_oce_ap_probe_suppress_bssid(dev, apdev, params):
+    """OCE AP and Probe Suppression BSSIDs attribute"""
+    hapd = hostapd.add_ap(apdev[0], oce_ap_params("test-oce"))
+    bssid = hapd.own_addr().replace(':', '')
+    da = oce_probe_resp_da(dev[0], hapd, params,
+                           "dd0c506f9a16" + "6906" + bssid)
+    if dev[0].own_addr() in da:
+        raise Exception("Probe Response frame sent despite suppression")
+    # An empty list suppresses the responses from all OCE APs
+    da = oce_probe_resp_da(dev[0], hapd, params, "dd06506f9a16" + "6900")
+    if dev[0].own_addr() in da:
+        raise Exception("Probe Response frame sent despite suppression")
+
+def test_oce_ap_bcast_probe_resp(dev, apdev, params):
+    """OCE AP sends broadcast Probe Response to an OCE STA"""
+    hapd = hostapd.add_ap(apdev[0], oce_ap_params("test-oce"))
+    da = oce_probe_resp_da(dev[0], hapd, params,
+                           "dd07506f9a16" + "650101")
+    if "ff:ff:ff:ff:ff:ff" not in da:
+        raise Exception("No broadcast Probe Response frame")
+    if dev[0].own_addr() in da:
+        raise Exception("Unexpected unicast Probe Response frame")
+
+def test_oce_ap_probe_max_channel_time(dev, apdev, params):
+    """OCE AP leaves Probe Request with a long Max Channel Time to Beacons"""
+    hapd = hostapd.add_ap(apdev[0], oce_ap_params("test-oce"))
+    # FILS Request Parameters: no criteria, Max Channel Time 100 TUs
+    da = oce_probe_resp_da(dev[0], hapd, params, "ff03020064")
+    if dev[0].own_addr() in da:
+        raise Exception("Probe Response frame sent despite Beacon within Max Channel Time")
+    da = oce_probe_resp_da(dev[0], hapd, params, "ff0302000a")
+    if dev[0].own_addr() not in da:
+        raise Exception("No Probe Response frame with a short Max Channel Time")

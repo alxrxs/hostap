@@ -749,6 +749,7 @@ struct probe_resp_params {
 	u8 *ecsa_pos;
 	const u8 *known_bss;
 	u8 known_bss_len;
+	bool bcast_resp;
 
 #ifdef CONFIG_IEEE80211AX
 	u8 *cca_pos;
@@ -1119,8 +1120,9 @@ static void hostapd_gen_probe_resp(struct hostapd_data *hapd,
 	 * Std 802.11ax-2021, 26.17.2.3.2. Broadcast address is also used for
 	 * the Probe Response frame template for the unsolicited (i.e., not as
 	 * a response to a specific request) case. */
-	if (params->req && (!is_6ghz_op_class(hapd->iconf->op_class) ||
-		    hapd->conf->ignore_broadcast_ssid))
+	if (params->req && !params->bcast_resp &&
+	    (!is_6ghz_op_class(hapd->iconf->op_class) ||
+	     hapd->conf->ignore_broadcast_ssid))
 		os_memcpy(params->resp->da, params->req->sa, ETH_ALEN);
 	else
 		os_memset(params->resp->da, 0xff, ETH_ALEN);
@@ -1500,6 +1502,67 @@ static bool parse_ml_probe_req(const struct ieee80211_eht_ml *ml, size_t ml_len,
 #endif /* CONFIG_IEEE80211BE */
 
 
+#ifdef CONFIG_MBO
+/*
+ * Wi-Fi Optimized Connectivity rules for a Probe Request frame received in a
+ * non-6 GHz band: -1 for no response (Probe Suppression SSIDs and BSSIDs,
+ * 3.5; a Beacon frame within the Max Channel Time replaces the response, 3.9),
+ * 1 for a broadcast response (to a broadcast Probe Request frame from an OCE
+ * STA, 3.6), 0 otherwise.
+ */
+static int oce_probe_resp_mode(struct hostapd_data *hapd,
+			       const struct ieee80211_mgmt *mgmt,
+			       const u8 *ie, size_t ie_len,
+			       const struct ieee802_11_elems *elems)
+{
+	bool bcast = is_broadcast_ether_addr(mgmt->da);
+	const u8 *attrs = NULL, *attr;
+	size_t attrs_len = 0;
+	unsigned int i;
+
+	if (!OCE_AP_ENABLED(hapd) || is_6ghz_op_class(hapd->iconf->op_class))
+		return 0;
+
+	if (elems->mbo && elems->mbo_len >= 4) {
+		attrs = elems->mbo + 4;
+		attrs_len = elems->mbo_len - 4;
+	}
+
+	attr = attrs ? get_ie(attrs, attrs_len,
+			      OCE_ATTR_ID_PROBE_SUPPRESS_SSIDS) : NULL;
+	for (i = 0; attr && i + 4 <= attr[1]; i += 4) {
+		if (WPA_GET_LE32(&attr[2 + i]) == hapd->conf->ssid.short_ssid)
+			return -1;
+	}
+
+	attr = attrs ? get_ie(attrs, attrs_len,
+			      OCE_ATTR_ID_PROBE_SUPPRESS_BSSIDS) : NULL;
+	if (attr && bcast) {
+		if (attr[1] == 0)
+			return -1; /* all OCE APs */
+		for (i = 0; i + ETH_ALEN <= attr[1]; i += ETH_ALEN) {
+			if (ether_addr_equal(&attr[2 + i], hapd->own_addr))
+				return -1;
+		}
+	}
+
+	/* A TBTT is always within a beacon interval; a Request element can ask
+	 * for elements that Beacon frames do not carry */
+	if (elems->fils_req_params && elems->fils_req_params[1] != 255 &&
+	    elems->fils_req_params[1] >= hapd->iconf->beacon_int &&
+	    !hapd->conf->ignore_broadcast_ssid &&
+	    !get_ie(ie, ie_len, WLAN_EID_REQUEST))
+		return -1;
+
+	if (bcast && attrs && get_ie(attrs, attrs_len, OCE_ATTR_ID_CAPA_IND) &&
+	    !hapd->conf->ignore_broadcast_ssid)
+		return 1;
+
+	return 0;
+}
+#endif /* CONFIG_MBO */
+
+
 void handle_probe_req(struct hostapd_data *hapd,
 		      const struct ieee80211_mgmt *mgmt, size_t len,
 		      int ssi_signal)
@@ -1786,6 +1849,18 @@ void handle_probe_req(struct hostapd_data *hapd,
 
 	os_memset(&params, 0, sizeof(params));
 
+#ifdef CONFIG_MBO
+	switch (oce_probe_resp_mode(hapd, mgmt, ie, ie_len, &elems)) {
+	case -1:
+		wpa_printf(MSG_MSGDUMP, "OCE: No Probe Response frame to " MACSTR,
+			   MAC2STR(mgmt->sa));
+		return;
+	case 1:
+		params.bcast_resp = true;
+		break;
+	}
+#endif /* CONFIG_MBO */
+
 #ifdef CONFIG_IEEE80211BE
 	if (hapd->conf->mld_ap && elems.probe_req_mle &&
 	    parse_ml_probe_req((struct ieee80211_eht_ml *) elems.probe_req_mle,
@@ -1811,8 +1886,8 @@ void handle_probe_req(struct hostapd_data *hapd,
 	 * If this is a broadcast probe request, apply no ack policy to avoid
 	 * excessive retries.
 	 */
-	noack = !!(res == WILDCARD_SSID_MATCH &&
-		   is_broadcast_ether_addr(mgmt->da));
+	noack = !!((res == WILDCARD_SSID_MATCH &&
+		    is_broadcast_ether_addr(mgmt->da)) || params.bcast_resp);
 
 	csa_offs_len = 0;
 	if (hapd->csa_in_progress) {
