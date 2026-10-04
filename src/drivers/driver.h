@@ -5212,6 +5212,14 @@ struct wpa_driver_ops {
 	int (*get_survey)(void *priv, unsigned int freq);
 
 	/**
+	 * get_tx_power - Get the current transmit power of the interface
+	 * @priv: Private driver interface data
+	 * @tx_power: Buffer for the transmit power in dBm
+	 * Returns: 0 on success, -1 on failure (e.g., not known)
+	 */
+	int (*get_tx_power)(void *priv, int *tx_power);
+
+	/**
 	 * status - Get driver interface status information
 	 * @priv: Private driver interface data
 	 * @buf: Buffer for printing the status information

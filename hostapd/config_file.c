@@ -4479,6 +4479,15 @@ static int hostapd_config_fill(struct hostapd_config *conf,
 		bss->mbo_cell_data_conn_pref = atoi(pos);
 	} else if (os_strcmp(buf, "oce") == 0) {
 		bss->oce = atoi(pos);
+	} else if (os_strcmp(buf, "oce_ip_subnet_id") == 0) {
+		if (hexstr2bin(pos, bss->oce_ip_subnet_id, ETH_ALEN) ||
+		    pos[2 * ETH_ALEN] != '\0') {
+			wpa_printf(MSG_ERROR,
+				   "Line %d: invalid oce_ip_subnet_id '%s'",
+				   line, pos);
+			return 1;
+		}
+		bss->oce_ip_subnet_id_set = true;
 #endif /* CONFIG_MBO */
 #ifdef CONFIG_TESTING_OPTIONS
 #define PARSE_TEST_PROBABILITY(_val)				\

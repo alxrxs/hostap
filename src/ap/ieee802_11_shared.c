@@ -809,7 +809,7 @@ u8 * hostapd_eid_mbo_rssi_assoc_rej(struct hostapd_data *hapd, u8 *eid,
 
 u8 * hostapd_eid_mbo(struct hostapd_data *hapd, u8 *eid, size_t len)
 {
-	u8 mbo[9], *mbo_pos = mbo;
+	u8 mbo[20], *mbo_pos = mbo;
 	u8 *pos = eid;
 
 	if (!hapd->conf->mbo_enabled &&
@@ -841,6 +841,19 @@ u8 * hostapd_eid_mbo(struct hostapd_data *hapd, u8 *eid, size_t len)
 		*mbo_pos++ = ctrl;
 	}
 
+	if (OCE_AP_ENABLED(hapd) && hapd->iface->tx_power_known) {
+		*mbo_pos++ = OCE_ATTR_ID_TX_POWER;
+		*mbo_pos++ = 1;
+		*mbo_pos++ = (u8) (s8) hapd->iface->tx_power;
+	}
+
+	if (OCE_AP_ENABLED(hapd) && hapd->conf->oce_ip_subnet_id_set) {
+		*mbo_pos++ = OCE_ATTR_ID_IP_SUBNET_ID;
+		*mbo_pos++ = ETH_ALEN;
+		os_memcpy(mbo_pos, hapd->conf->oce_ip_subnet_id, ETH_ALEN);
+		mbo_pos += ETH_ALEN;
+	}
+
 	pos += mbo_add_ie(pos, len, mbo, mbo_pos - mbo);
 
 	return pos;
@@ -866,6 +879,10 @@ u8 hostapd_mbo_ie_len(struct hostapd_data *hapd)
 	/* OCE capability indication attribute (3) */
 	if (OCE_STA_CFON_ENABLED(hapd) || OCE_AP_ENABLED(hapd))
 		len += 3;
+
+	/* Transmit Power (3) and IP Subnet Identifier (8) attributes */
+	if (OCE_AP_ENABLED(hapd))
+		len += 3 + (hapd->conf->oce_ip_subnet_id_set ? 8 : 0);
 
 	return len;
 }

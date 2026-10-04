@@ -909,6 +909,8 @@ struct wiphy_idx_data {
 	u8 use_4addr;
 	u64 wdev_id;
 	bool wdev_id_set;
+	int tx_power; /* mBm */
+	bool tx_power_set;
 };
 
 
@@ -939,6 +941,12 @@ static int netdev_info_handler(struct nl_msg *msg, void *arg)
 		info->wdev_id_set = true;
 	}
 
+	if (tb[NL80211_ATTR_WIPHY_TX_POWER_LEVEL]) {
+		info->tx_power =
+			nla_get_u32(tb[NL80211_ATTR_WIPHY_TX_POWER_LEVEL]);
+		info->tx_power_set = true;
+	}
+
 	return NL_SKIP;
 }
 
@@ -957,6 +965,24 @@ int nl80211_get_wiphy_index(struct i802_bss *bss)
 	if (send_and_recv_resp(bss->drv, msg, netdev_info_handler, &data) == 0)
 		return data.wiphy_idx;
 	return -1;
+}
+
+
+static int nl80211_get_tx_power(void *priv, int *tx_power)
+{
+	struct i802_bss *bss = priv;
+	struct nl_msg *msg;
+	struct wiphy_idx_data data = {
+		.wiphy_idx = -1,
+	};
+
+	msg = nl80211_cmd_msg(bss, 0, NL80211_CMD_GET_INTERFACE);
+	if (!msg ||
+	    send_and_recv_resp(bss->drv, msg, netdev_info_handler, &data) ||
+	    !data.tx_power_set)
+		return -1;
+	*tx_power = data.tx_power / 100;
+	return 0;
 }
 
 
@@ -16903,6 +16929,7 @@ const struct wpa_driver_ops wpa_driver_nl80211_ops = {
 	.update_dh_ie = nl80211_update_dh_ie,
 	.get_mac_addr = wpa_driver_nl80211_get_macaddr,
 	.get_survey = wpa_driver_nl80211_get_survey,
+	.get_tx_power = nl80211_get_tx_power,
 	.status = wpa_driver_nl80211_status,
 	.switch_channel = nl80211_switch_channel,
 #ifdef CONFIG_IEEE80211AX
