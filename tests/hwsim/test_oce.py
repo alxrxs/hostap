@@ -91,6 +91,35 @@ def test_rssi_based_assoc_rej_timeout(dev, apdev, params):
         reset_rx_rssi(dev[0])
         dev[0].request("SCAN_INTERVAL 5")
 
+def test_rssi_based_assoc_rej_single_mbo_ie(dev, apdev, params):
+    """RSSI-based association rejection in a single MBO-OCE element"""
+    check_set_tx_power(dev, apdev)
+    try:
+        ap_params = {'ssid': "test-RSSI-ar", 'mbo': '1', 'oce': '4',
+                     'rssi_reject_assoc_rssi': '-45',
+                     'rssi_reject_assoc_timeout': '5'}
+        hapd = hostapd.add_ap(apdev[0], ap_params)
+        set_rx_rssi(dev[0], -50)
+        dev[0].connect("test-RSSI-ar", key_mgmt="NONE", scan_freq="2412",
+                       wait_connect=False)
+        ev = dev[0].wait_event(['CTRL-EVENT-ASSOC-REJECT'], 2)
+        if ev is None or 'status_code=34' not in ev:
+            raise Exception("Association not rejected for the RSSI")
+        dev[0].request("DISCONNECT")
+    finally:
+        reset_rx_rssi(dev[0])
+    time.sleep(0.1)
+    out = run_tshark(os.path.join(params['logdir'], "hwsim0.pcapng"),
+                     "wlan.fc.type_subtype == 1 && wlan.fixed.status_code == 34",
+                     display=["wlan.tag.vendor.oui.type"])
+    lines = out.splitlines()
+    if not lines:
+        raise Exception("No rejecting (Re)Association Response frame seen")
+    for line in lines:
+        if line.split(',').count("22") != 1:
+            raise Exception("Not exactly one MBO-OCE element: " + line)
+
+
 def run_rssi_based_assoc_rej_good_rssi(dev, apdev):
     ap_params = {'ssid': "test-RSSI-ar-to",
                  'rssi_reject_assoc_rssi': '-45',
