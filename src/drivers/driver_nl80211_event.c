@@ -2878,6 +2878,10 @@ static void nl80211_spurious_frame(struct i802_bss *bss, struct nlattr **tb,
 		nla_get_u8(tb[NL80211_ATTR_MLO_LINK_ID]) : -1;
 	link_id = event.rx_from_unknown.link_id;
 
+	/* mac80211 reports link ID 0 for a BSS that is not an AP MLD */
+	if (!bss->valid_links)
+		link_id = event.rx_from_unknown.link_id = -1;
+
 	if (link_id >= 0) {
 		if (!nl80211_link_valid(bss->valid_links, link_id)) {
 			wpa_printf(MSG_DEBUG,
