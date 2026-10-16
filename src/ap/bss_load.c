@@ -55,7 +55,12 @@ static void update_channel_utilization(void *eloop_data, void *user_data)
 		return;
 	}
 
-	ieee802_11_set_beacon_per_bss_only(hapd);
+	/* A Beacon frame update reprograms the whole BSS in the driver; skip
+	 * it when the BSS Load element would not change. */
+	if (!hapd->beacon_bss_load_set ||
+	    hapd->beacon_bss_load_num_sta != hapd->num_sta ||
+	    hapd->beacon_bss_load_chan_util != iface->channel_utilization)
+		ieee802_11_set_beacon_per_bss_only(hapd);
 
 	if (get_bss_load_update_timeout(hapd, &sec, &usec) < 0)
 		return;

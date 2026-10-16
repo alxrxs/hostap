@@ -2433,6 +2433,9 @@ int ieee802_11_build_ap_params(struct hostapd_data *hapd,
 
 	tailpos = hostapd_get_rsne(hapd, tailpos, tailend - tailpos);
 	tailpos = hostapd_eid_bss_load(hapd, tailpos, tailend - tailpos);
+	hapd->beacon_bss_load_set = true;
+	hapd->beacon_bss_load_num_sta = hapd->num_sta;
+	hapd->beacon_bss_load_chan_util = hapd->iface->channel_utilization;
 	tailpos = hostapd_eid_rm_enabled_capab(hapd, tailpos,
 					       tailend - tailpos);
 	tailpos = hostapd_get_mde(hapd, tailpos, tailend - tailpos);
