@@ -2205,6 +2205,7 @@ static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
 	u8 *subelem;
 	struct wpa_auth_config *conf = &sm->wpa_auth->conf;
 	struct wpa_group *gsm = sm->group;
+	int idx;
 	size_t subelem_len, pad_len;
 	const u8 *key;
 	size_t key_len;
@@ -2216,6 +2217,7 @@ static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
 	if (reassoc && vlan_id)
 		gsm = wpa_select_vlan_wpa_group(gsm, vlan_id);
 #endif /* CONFIG_IEEE80211BE */
+	idx = wpa_auth_join_gtk_idx(sm, gsm);
 
 	if (wpa_key_mgmt_fils(sm->wpa_key_mgmt)) {
 		kek = sm->PTK.kek2;
@@ -2239,7 +2241,7 @@ static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
 	if (key_len + pad_len < 16)
 		pad_len += 8;
 	if (pad_len && key_len < sizeof(keybuf)) {
-		os_memcpy(keybuf, gsm->GTK[gsm->GN - 1], key_len);
+		os_memcpy(keybuf, gsm->GTK[idx - 1], key_len);
 		if (conf->disable_gtk) {
 			/*
 			 * Provide unique random GTK to each STA to prevent use
@@ -2261,7 +2263,7 @@ static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
 			return NULL;
 		key = keybuf;
 	} else {
-		key = gsm->GTK[gsm->GN - 1];
+		key = gsm->GTK[idx - 1];
 	}
 
 	/*
@@ -2276,9 +2278,9 @@ static u8 * wpa_ft_gtk_subelem(struct wpa_state_machine *sm, size_t *len,
 	subelem[0] = FTIE_SUBELEM_GTK;
 	subelem[1] = 11 + key_len + 8;
 	/* Key ID in B0-B1 of Key Info */
-	WPA_PUT_LE16(&subelem[2], gsm->GN & 0x03);
+	WPA_PUT_LE16(&subelem[2], idx & 0x03);
 	subelem[4] = gsm->GTK_len;
-	wpa_auth_get_seqnum(sm->wpa_auth, NULL, gsm->GN, subelem + 5);
+	wpa_auth_get_seqnum(sm->wpa_auth, NULL, idx, subelem + 5);
 	if (aes_wrap(kek, kek_len, key_len / 8, key, subelem + 13)) {
 		wpa_printf(MSG_DEBUG,
 			   "FT: GTK subelem encryption failed: kek_len=%d",
@@ -2299,6 +2301,7 @@ static u8 * wpa_ft_igtk_subelem(struct wpa_state_machine *sm, size_t *len)
 	u8 *subelem, *pos;
 	struct wpa_auth_config *conf = &sm->wpa_auth->conf;
 	struct wpa_group *gsm = sm->group;
+	int idx;
 	size_t subelem_len;
 	const u8 *kek, *igtk;
 	size_t kek_len;
@@ -2325,12 +2328,13 @@ static u8 * wpa_ft_igtk_subelem(struct wpa_state_machine *sm, size_t *len)
 	pos = subelem;
 	*pos++ = FTIE_SUBELEM_IGTK;
 	*pos++ = subelem_len - 2;
-	WPA_PUT_LE16(pos, gsm->GN_igtk);
+	idx = wpa_auth_join_igtk_idx(gsm);
+	WPA_PUT_LE16(pos, idx);
 	pos += 2;
-	wpa_auth_get_seqnum(sm->wpa_auth, NULL, gsm->GN_igtk, pos);
+	wpa_auth_get_seqnum(sm->wpa_auth, NULL, idx, pos);
 	pos += 6;
 	*pos++ = igtk_len;
-	igtk = gsm->IGTK[gsm->GN_igtk - 4];
+	igtk = gsm->IGTK[idx - 4];
 	if (conf->disable_gtk) {
 		/*
 		 * Provide unique random IGTK to each STA to prevent use of
@@ -2360,6 +2364,7 @@ static u8 * wpa_ft_bigtk_subelem(struct wpa_state_machine *sm, size_t *len)
 	u8 *subelem, *pos;
 	struct wpa_authenticator *wpa_auth = sm->wpa_auth;
 	struct wpa_group *gsm = wpa_auth->group;
+	int idx;
 	size_t subelem_len;
 	const u8 *kek, *bigtk;
 	size_t kek_len;
@@ -2385,12 +2390,13 @@ static u8 * wpa_ft_bigtk_subelem(struct wpa_state_machine *sm, size_t *len)
 	pos = subelem;
 	*pos++ = FTIE_SUBELEM_BIGTK;
 	*pos++ = subelem_len - 2;
-	WPA_PUT_LE16(pos, gsm->GN_bigtk);
+	idx = wpa_auth_join_bigtk_idx(sm, gsm);
+	WPA_PUT_LE16(pos, idx);
 	pos += 2;
-	wpa_auth_get_seqnum(wpa_auth, NULL, gsm->GN_bigtk, pos);
+	wpa_auth_get_seqnum(wpa_auth, NULL, idx, pos);
 	pos += 6;
 	*pos++ = bigtk_len;
-	bigtk = gsm->BIGTK[gsm->GN_bigtk - 6];
+	bigtk = gsm->BIGTK[idx - 6];
 	if (aes_wrap(kek, kek_len, bigtk_len / 8, bigtk, pos)) {
 		wpa_printf(MSG_DEBUG,
 			   "FT: BIGTK subelem encryption failed: kek_len=%d",

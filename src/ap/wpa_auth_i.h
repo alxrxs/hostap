@@ -53,6 +53,10 @@ struct wpa_state_machine {
 	bool EAPOLKeyRequest;
 	bool MICVerified;
 	bool GUpdateStationKeys;
+	/* Group keys given to the STA since it last reached PTKINITDONE:
+	 * bit (GTK Key ID - 1) and bit (BIGTK Key ID - 6) */
+	u8 gtk_given;
+	u8 bigtk_given;
 	u8 ANonce[WPA_NONCE_LEN];
 	u8 SNonce[WPA_NONCE_LEN];
 	u8 alt_SNonce[WPA_NONCE_LEN];
@@ -338,6 +342,11 @@ int wpa_auth_for_each_auth(struct wpa_authenticator *wpa_auth,
 void wpa_auth_store_ptksa(struct wpa_authenticator *wpa_auth,
 			  const u8 *addr, int cipher,
 			  u32 life_time, const struct wpa_ptk *ptk);
+
+int wpa_auth_join_gtk_idx(struct wpa_state_machine *sm, struct wpa_group *gsm);
+int wpa_auth_join_igtk_idx(struct wpa_group *gsm);
+int wpa_auth_join_bigtk_idx(struct wpa_state_machine *sm,
+			    struct wpa_group *gsm);
 
 #ifdef CONFIG_IEEE80211R_AP
 int wpa_write_mdie(struct wpa_auth_config *conf, u8 *buf, size_t len);
