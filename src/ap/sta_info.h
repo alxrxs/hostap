@@ -167,6 +167,9 @@ struct sta_info {
 	unsigned int radius_das_match:1;
 	unsigned int ecsa_supported:1;
 	unsigned int added_unassoc:1;
+	/* (Re)Association Response frame with status success whose TX status
+	 * reported no ACK; see ieee802_11_rx_from_unknown() */
+	struct wpabuf *unacked_assoc_resp;
 	unsigned int pending_wds_enable:1;
 	unsigned int power_capab:1;
 	unsigned int agreed_to_steer:1;
