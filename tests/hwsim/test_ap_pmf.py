@@ -17,6 +17,7 @@ from utils import *
 from wlantest import Wlantest
 from wpasupplicant import WpaSupplicant
 from test_eap_proto import rx_msg, tx_msg, proxy_msg
+from test_ap_ft import ft_params1, ft_params2
 
 @remote_compatible
 def test_ap_pmf_required(dev, apdev):
@@ -348,6 +349,54 @@ def test_ap_pmf_assoc_comeback2(dev, apdev):
     if wt.get_sta_counter("reassocresp_comeback", apdev[0]['bssid'],
                           dev[0].p2p_interface_addr()) < 1:
         raise Exception("AP did not use reassociation comeback request")
+
+def test_ap_pmf_assoc_comeback_ft(dev, apdev):
+    """FT-PSK AP with PMF association after SA Query timeout on an FT association"""
+    ssid = "assoc-comeback"
+    params = ft_params1(ssid=ssid, passphrase="12345678")
+    params["ieee80211w"] = "2"
+    hapd0 = hostapd.add_ap(apdev[0], params)
+    params = ft_params2(ssid=ssid, passphrase="12345678")
+    params["ieee80211w"] = "2"
+    hostapd.add_ap(apdev[1], params)
+    dev[0].connect(ssid, psk="12345678", ieee80211w="2",
+                   key_mgmt="FT-PSK", proto="WPA2", scan_freq="2412")
+    dev[0].roam(apdev[1]['bssid'])
+    dev[0].roam(apdev[0]['bssid'])
+    if "OK" not in dev[0].request("DROP_SA"):
+        raise Exception("DROP_SA failed")
+    dev[0].dump_monitor()
+    dev[0].request("REASSOCIATE")
+    ev = dev[0].wait_event(["CTRL-EVENT-CONNECTED",
+                            "CTRL-EVENT-ASSOC-REJECT"], timeout=10)
+    if ev is None:
+        raise Exception("Timeout on re-connection")
+    if "CTRL-EVENT-ASSOC-REJECT" in ev:
+        raise Exception("Association rejected: " + ev)
+    hwsim_utils.test_connectivity(dev[0], hapd0)
+
+def test_ap_pmf_assoc_comeback_deny_ptk0_rekey(dev, apdev):
+    """WPA2-PSK AP with PMF association after SA Query timeout and wpa_deny_ptk0_rekey"""
+    ssid = "assoc-comeback"
+    params = hostapd.wpa2_params(ssid=ssid, passphrase="12345678")
+    params["wpa_key_mgmt"] = "WPA-PSK"
+    params["ieee80211w"] = "2"
+    params["wpa_deny_ptk0_rekey"] = "2"
+    hapd = hostapd.add_ap(apdev[0], params)
+    dev[0].connect(ssid, psk="12345678", ieee80211w="2",
+                   key_mgmt="WPA-PSK", proto="WPA2", scan_freq="2412")
+    hapd.wait_sta()
+    if "OK" not in dev[0].request("DROP_SA"):
+        raise Exception("DROP_SA failed")
+    dev[0].dump_monitor()
+    dev[0].request("REASSOCIATE")
+    ev = dev[0].wait_event(["CTRL-EVENT-CONNECTED",
+                            "CTRL-EVENT-DISCONNECTED"], timeout=10)
+    if ev is None:
+        raise Exception("Timeout on re-connection")
+    if "CTRL-EVENT-DISCONNECTED" in ev:
+        raise Exception("New association treated as a PTK0 rekey: " + ev)
+    hwsim_utils.test_connectivity(dev[0], hapd)
 
 @remote_compatible
 def test_ap_pmf_assoc_comeback3(dev, apdev):
