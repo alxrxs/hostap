@@ -16,6 +16,7 @@ import hostapd
 from utils import *
 from wlantest import Wlantest
 from wpasupplicant import WpaSupplicant
+from test_ap_ft import ft_params1, ft_params2
 from test_eap_proto import rx_msg, tx_msg, proxy_msg
 
 @remote_compatible
@@ -1579,6 +1580,97 @@ def test_ap_pmf_beacon_protection_reconnect(dev, apdev):
     ev = dev[0].wait_event(["CTRL-EVENT-BEACON-LOSS"], timeout=5)
     if ev is not None:
         raise Exception("Beacon loss detected")
+
+def test_ap_pmf_beacon_protection_join_during_rekey(dev, apdev):
+    """Beacon protection and a STA joining during a group rekey"""
+    ssid = "test-beacon-prot"
+    params = hostapd.wpa2_params(ssid=ssid, passphrase="12345678")
+    params["wpa_key_mgmt"] = "WPA-PSK-SHA256"
+    params["ieee80211w"] = "2"
+    params["beacon_prot"] = "1"
+    params["wpa_group_update_count"] = "10"
+    try:
+        hapd = hostapd.add_ap(apdev[0], params)
+    except Exception as e:
+        if "Failed to enable hostapd interface" in str(e):
+            raise HwsimSkip("Beacon protection not supported")
+        raise
+
+    dev[0].connect(ssid, psk="12345678", ieee80211w="2", beacon_prot="1",
+                   key_mgmt="WPA-PSK-SHA256", proto="WPA2", scan_freq="2412")
+
+    # dev[0] holds the Group Key Handshake, so the rekey stays in progress
+    # with the new keys not yet in use.
+    dev[0].set("ext_eapol_frame_io", "1")
+    if "OK" not in hapd.request("REKEY_GTK"):
+        raise Exception("REKEY_GTK failed")
+    if dev[0].wait_event(["EAPOL-RX"], timeout=5) is None:
+        raise Exception("Group Key Handshake not started")
+
+    dev[1].connect(ssid, psk="12345678", ieee80211w="2", beacon_prot="1",
+                   key_mgmt="WPA-PSK-SHA256", proto="WPA2", scan_freq="2412")
+    ev = dev[1].wait_event(["CTRL-EVENT-UNPROT-BEACON",
+                            "Group rekeying completed"], timeout=5)
+    if ev is None or "UNPROT-BEACON" in ev:
+        raise Exception("Joining STA did not get the keys in use and then the new ones: " + str(ev))
+
+    dev[0].set("ext_eapol_frame_io", "0")
+    if dev[0].wait_event(["Group rekeying completed"], timeout=5) is None:
+        raise Exception("Group rekey not completed")
+    ev = dev[1].wait_event(["CTRL-EVENT-UNPROT-BEACON"], timeout=1)
+    if ev is not None:
+        raise Exception("Beacon not verified after the rekey: " + ev)
+    hwsim_utils.test_connectivity(dev[0], hapd)
+    hwsim_utils.test_connectivity(dev[1], hapd)
+
+def test_ap_pmf_beacon_protection_ft_during_rekey(dev, apdev):
+    """Beacon protection and an FT roam to a BSS during a group rekey"""
+    ssid = "test-ft"
+    passphrase = "12345678"
+    aps = []
+    for i, ft_params in enumerate((ft_params1, ft_params2)):
+        params = ft_params(ssid=ssid, passphrase=passphrase)
+        params["ieee80211w"] = "2"
+        params["beacon_prot"] = "1"
+        params["wpa_group_update_count"] = "10"
+        try:
+            aps.append(hostapd.add_ap(apdev[i], params))
+        except Exception as e:
+            if "Failed to enable hostapd interface" in str(e):
+                raise HwsimSkip("Beacon protection not supported")
+            raise
+    bssid0 = apdev[0]['bssid']
+
+    dev[1].connect(ssid, psk=passphrase, key_mgmt="FT-PSK", proto="WPA2",
+                   ieee80211w="2", beacon_prot="1", scan_freq="2412",
+                   bssid=bssid0)
+    dev[0].connect(ssid, psk=passphrase, key_mgmt="FT-PSK", proto="WPA2",
+                   ieee80211w="2", beacon_prot="1", scan_freq="2412",
+                   bssid=apdev[1]['bssid'])
+
+    # dev[1] holds the Group Key Handshake, so the rekey of the first BSS
+    # stays in progress with the new keys not yet in use.
+    dev[1].set("ext_eapol_frame_io", "1")
+    if "OK" not in aps[0].request("REKEY_GTK"):
+        raise Exception("REKEY_GTK failed")
+    if dev[1].wait_event(["EAPOL-RX"], timeout=5) is None:
+        raise Exception("Group Key Handshake not started")
+
+    dev[0].scan_for_bss(bssid0, freq="2412")
+    dev[0].roam(bssid0)
+    ev = dev[0].wait_event(["CTRL-EVENT-UNPROT-BEACON",
+                            "Group rekeying completed"], timeout=5)
+    if ev is None or "UNPROT-BEACON" in ev:
+        raise Exception("Roaming STA did not get the keys in use and then the new ones: " + str(ev))
+
+    dev[1].set("ext_eapol_frame_io", "0")
+    if dev[1].wait_event(["Group rekeying completed"], timeout=5) is None:
+        raise Exception("Group rekey not completed")
+    ev = dev[0].wait_event(["CTRL-EVENT-UNPROT-BEACON"], timeout=1)
+    if ev is not None:
+        raise Exception("Beacon not verified after the rekey: " + ev)
+    hwsim_utils.test_connectivity(dev[0], aps[0])
+    hwsim_utils.test_connectivity(dev[1], aps[0])
 
 def test_ap_pmf_beacon_protection_unicast(dev, apdev):
     """WPA2-PSK Beacon protection (BIP) and unicast Beacon frame"""
