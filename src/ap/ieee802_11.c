@@ -8263,6 +8263,14 @@ static void handle_assoc(struct hostapd_data *hapd,
 		 * unprotected frame would be received by the STA that is now
 		 * trying to associate.
 		 */
+
+		/* The STA no longer has the previous association, so end it
+		 * here: this association then gets a new driver STA entry and
+		 * a new 4-way handshake instead of being processed as a
+		 * reassociation within the old one. */
+		ap_sta_set_authorized(hapd, sta, 0);
+		sta->flags &= ~WLAN_STA_ASSOC;
+		accounting_sta_stop(hapd, sta);
 	}
 
 	/* Make sure that the previously registered inactivity timer will not
