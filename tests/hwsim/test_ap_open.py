@@ -251,6 +251,32 @@ def test_ap_bss_load(dev, apdev):
     if avg is None:
         raise Exception("No STATUS chan_util_avg seen")
 
+def test_ap_bss_load_beacon_update(dev, apdev):
+    """BSS Load element and Beacon frame updates only when it changes"""
+    hapd = hostapd.add_ap(apdev[0], {"ssid": "open",
+                                     "bss_load_update_period": "1"})
+    bssid = hapd.own_addr()
+    time.sleep(0.5)
+
+    # A Beacon frame update builds the frame: count the builds while the
+    # station count and channel utilization (0 with mac80211_hwsim) stay.
+    if "OK" not in hapd.request("TEST_ALLOC_FAIL 100000:ieee802_11_build_ap_params"):
+        raise HwsimSkip("TEST_ALLOC_FAIL not supported")
+    time.sleep(2)
+    left = hapd.request("GET_ALLOC_FAIL")
+    hapd.request("TEST_ALLOC_FAIL 0:")
+    builds = 100000 - int(left.split(':')[0])
+    logger.info("Beacon frame builds in 2 s: %d" % builds)
+    if builds > 0:
+        raise Exception("Beacon frame rebuilt with an unchanged BSS Load element")
+
+    dev[0].connect("open", key_mgmt="NONE", scan_freq="2412")
+    time.sleep(0.5)
+    dev[1].scan_for_bss(bssid, freq="2412", force_scan=True)
+    ie = parse_ie(dev[1].get_bss(bssid)['ie'])
+    if 11 not in ie or struct.unpack('<H', ie[11][0:2])[0] != 1:
+        raise Exception("BSS Load element did not report the station: " + str(ie.get(11)))
+
 def test_ap_bss_load_fail(dev, apdev):
     """BSS Load update failing to get survey data"""
     hapd = hostapd.add_ap(apdev[0],
