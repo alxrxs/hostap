@@ -1284,9 +1284,6 @@ void * tls_init(const struct tls_config *conf)
 		void openssl_load_legacy_provider(void);
 
 		openssl_load_legacy_provider();
-#if !defined(ANDROID) && defined(OPENSSL_NO_ENGINE)
-		openssl_load_pkcs11_provider();
-#endif /* !ANDROID && OPENSSL_NO_ENGINE */
 
 		tls_global = context = tls_context_new(conf);
 		if (context == NULL)
@@ -5813,6 +5810,12 @@ int tls_connection_set_params(void *tls_ctx, struct tls_connection *conn,
 		return -1;
 
 	if (engine_id) {
+#if !defined(ANDROID) && defined(OPENSSL_NO_ENGINE)
+		/* The PKCS#11 provider is optional: load it only for a
+		 * connection that uses it. */
+		if (!os_strcmp(engine_id, "pkcs11"))
+			openssl_load_pkcs11_provider();
+#endif /* !ANDROID && OPENSSL_NO_ENGINE */
 		wpa_printf(MSG_DEBUG, "SSL: Initializing TLS engine %s",
 			   engine_id);
 		ret = tls_engine_init(conn, engine_id, params->pin,
