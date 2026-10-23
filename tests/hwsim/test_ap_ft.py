@@ -3624,6 +3624,41 @@ def test_ap_ft_pmksa_caching(dev, apdev):
     run_roams(dev[0], apdev, hapd, hapd1, ssid, None, eap=True,
               eap_identity=identity, pmksa_caching=True)
 
+def test_ap_ft_pmksa_caching_stale_assoc(dev, apdev):
+    """FT-EAP PMKSA caching for a STA with a stale association after SA Query timeout"""
+    ssid = "test-ft"
+
+    radius = hostapd.radius_params()
+    params = ft_params1(ssid=ssid)
+    params['wpa_key_mgmt'] = "FT-EAP"
+    params["ieee8021x"] = "1"
+    params["ieee80211w"] = "2"
+    params = dict(list(radius.items()) + list(params.items()))
+    hapd = hostapd.add_ap(apdev[0], params)
+
+    dev[0].connect(ssid, key_mgmt="FT-EAP", proto="WPA2", ieee80211w="2",
+                   eap="GPSK", identity="gpsk user",
+                   password="abcdefghijklmnop0123456789abcdef",
+                   ft_eap_pmksa_caching="1", scan_freq="2412")
+    hapd.wait_sta()
+
+    # The STA loses its association without telling the AP and returns with
+    # the PMKID of the cached PMKSA once the SA Query has timed out.
+    if "OK" not in dev[0].request("DROP_SA"):
+        raise Exception("DROP_SA failed")
+    dev[0].dump_monitor()
+    dev[0].request("REASSOCIATE")
+    ev = dev[0].wait_event(["CTRL-EVENT-CONNECTED", "CTRL-EVENT-EAP-STARTED",
+                            "CTRL-EVENT-ASSOC-REJECT"], timeout=15)
+    if ev is None:
+        raise Exception("Timeout on re-connection")
+    if "CTRL-EVENT-CONNECTED" not in ev:
+        raise Exception("Unexpected event: " + ev)
+    ev = dev[0].wait_event(["CTRL-EVENT-DISCONNECTED"], timeout=3)
+    if ev is not None:
+        raise Exception("4-way handshake failed: " + ev)
+    hwsim_utils.test_connectivity(dev[0], hapd)
+
 def test_ap_ft_pmksa_caching_sha384(dev, apdev):
     """FT-EAP-SHA384 and PMKSA caching for initial mobility domain association"""
     ssid = "test-ft"
