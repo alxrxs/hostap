@@ -2837,6 +2837,15 @@ SM_STATE(WPA_PTK, INITPMK)
 		wpa_printf(MSG_DEBUG, "WPA: PMK from PMKSA cache");
 		os_memcpy(sm->PMK, sm->pmksa->pmk, sm->pmksa->pmk_len);
 		sm->pmk_len = sm->pmksa->pmk_len;
+#ifdef CONFIG_IEEE80211R_AP
+		if (wpa_key_mgmt_ft(sm->wpa_key_mgmt)) {
+			/* The PMKSA cache entry is not guaranteed to outlive
+			 * the 4-way handshake, so keep the XXKey here. */
+			os_memcpy(sm->xxkey, sm->pmksa->pmk,
+				  sm->pmksa->pmk_len);
+			sm->xxkey_len = sm->pmksa->pmk_len;
+		}
+#endif /* CONFIG_IEEE80211R_AP */
 #ifdef CONFIG_DPP
 	} else if (sm->wpa_key_mgmt == WPA_KEY_MGMT_DPP) {
 		wpa_printf(MSG_DEBUG,
